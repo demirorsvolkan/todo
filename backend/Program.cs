@@ -1,5 +1,21 @@
+using Microsoft.EntityFrameworkCore;
+using TodoApi.Data;
+using TodoApi.Models;
+
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("Frontend", policy =>
+    {
+        policy
+            .AllowAnyOrigin()
+            .AllowAnyHeader()
+            .AllowAnyMethod();
+    });
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -10,30 +26,44 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+app.UseCors("Frontend");
+app.MapGet("/todos", async (AppDbContext db) =>
+    await db.Todos.ToListAsync());
 
-app.MapGet("/api/todos", () =>
+app.MapPost("/todos", async (Todo todo, AppDbContext db) =>
 {
-    return Results.Ok(new[]
-    {
-        new { Id = 1, Text = "İlk todo" },
-        new { Id = 2, Text = "İkinci todo" }
-    });
+    db.Todos.Add(todo);
+    await db.SaveChangesAsync();
+
+    return Results.Created($"/todos/{todo.Id}", todo);
 });
 
-app.MapPost("/api/todos", (TodoRequest request) =>
+app.MapDelete("/todos/{id}", async (int id, AppDbContext db) =>
 {
-    return Results.Created("/api/todos/1", new
-    {
-        Id = 1,
-        Text = request.Text
-    });
-});
+    var todo = await db.Todos.FindAsync(id);
 
-app.MapDelete("/api/todos/{id:int}", (int id) =>
-{
+    if (todo is null)
+        return Results.NotFound();
+
+    db.Todos.Remove(todo);
+    await db.SaveChangesAsync();
+
     return Results.NoContent();
 });
+app.MapPut("/todos/{id}", async (int id, Todo updatedTodo, AppDbContext db) =>
+{
+    var todo = await db.Todos.FindAsync(id);
 
+    if (todo is null)
+    {
+        return Results.NotFound();
+    }
+
+    todo.Title = updatedTodo.Title;
+    todo.IsCompleted = updatedTodo.IsCompleted;
+
+    await db.SaveChangesAsync();
+
+    return Results.Ok(todo);
+});
 app.Run();
-
-record TodoRequest(string Text);
