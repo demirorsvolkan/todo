@@ -1,0 +1,19 @@
+# .NET
+**/bin/
+**/obj/
+
+# Node / React
+**/node_modules/
+**/dist/
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
