@@ -1,35 +1,36 @@
 services:
   postgres:
-    image: postgres:16
+    image: postgres:16 #postgre için bu imajı kullan
     container_name: todo-postgres
     environment:
-      POSTGRES_DB: todo_db
-      POSTGRES_USER: todo_user
-      POSTGRES_PASSWORD: todo_password
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
-      - "5432:5432"
+      - "5432:5432" #host:container
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data #konteynır silinse de veriler kalıcı alanda saklanabilsin diye burayı tanımladık
 
   backend:
     build:
-      context: ./backend
+      context: ./backend #şu dizindeki dockerfile ile image oluştur
     container_name: todo-backend
     environment:
-      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=todo_db;Username=todo_user;Password=todo_password"
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
     ports:
       - "8080:8080"
     depends_on:
-      - postgres
+      - postgres # bu konteynır çalışmadan önce postgres çalışsın
       
   frontend:
     build:
-      context: ./frontend
+      context: ./frontend #şu dizindeki dockerfile ile image oluştur
     container_name: todo-frontend
     ports:
       - "80:80"
     depends_on:
-      - backend
+      - backend # bu konteynır çalışmadan önce backend çalışsın
 
+#yukarıda ayrılan disk alanı için compose tanımı yaptık 
 volumes:
   postgres_data:
