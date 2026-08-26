@@ -23,20 +23,20 @@ pipeline {
                 sh 'docker build -t todo-backend:latest ./backend'
             }
         }
+
         stage('Build Frontend Image') {
             steps {
                 echo 'Frontend Docker image oluşturuluyor.'
                 sh 'docker build -t todo-frontend:latest ./frontend'
             }
+        }
+
         stage('Docker Image Test') {
             steps {
                 echo 'Oluşturulan Docker imageları kontrol ediliyor.'
                 sh 'docker images | grep todo'
             }
-}
-
-}
-
+        }
     }
 
     post {
