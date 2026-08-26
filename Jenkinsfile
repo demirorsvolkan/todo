@@ -28,13 +28,20 @@ pipeline {
                 echo 'Frontend Docker image oluşturuluyor.'
                 sh 'docker build -t todo-frontend:latest ./frontend'
             }
+        stage('Docker Image Test') {
+            steps {
+                echo 'Oluşturulan Docker image'ları kontrol ediliyor.'
+                sh 'docker images | grep todo'
+            }
+}
+
 }
 
     }
 
     post {
         success {
-            echo 'GitHub → Jenkins → Docker → Backend Build başarılı!'
+            echo 'GitHub → Jenkins → Docker → Frontend + Backend Build başarılı!'
         }
     }
 }
