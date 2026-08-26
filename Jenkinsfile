@@ -23,6 +23,13 @@ pipeline {
                 sh 'docker build -t todo-backend:latest ./backend'
             }
         }
+        stage('Build Frontend Image') {
+            steps {
+                echo 'Frontend Docker image oluşturuluyor.'
+                sh 'docker build -t todo-frontend:latest ./frontend'
+            }
+}
+
     }
 
     post {
