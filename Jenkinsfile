@@ -30,7 +30,7 @@ pipeline {
             }
         stage('Docker Image Test') {
             steps {
-                echo 'Oluşturulan Docker image'ları kontrol ediliyor.'
+                echo 'Oluşturulan Docker imageları kontrol ediliyor.'
                 sh 'docker images | grep todo'
             }
 }
