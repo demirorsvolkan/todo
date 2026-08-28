@@ -555,7 +555,6 @@ pipeline {
 }
 
 
-
 stage('12B - Docker Hub Test Tag Query') {
     steps {
         echo '========== DOCKER HUB TEST TAG QUERY =========='
@@ -588,21 +587,31 @@ stage('12B - Docker Hub Test Tag Query') {
 
                 cat /tmp/backend-tag.json || true
 
-                if [ "$HTTP_CODE" != "200" ]; then
+                if [ "$HTTP_CODE" = "200" ]; then
                     echo
-                    echo "Backend test tag API üzerinden bulunamadı."
+                    echo "HATA: Backend test tag ZATEN VAR!"
+                    echo "Aynı test tag'i tekrar kullanılamaz."
+                    exit 1
+                fi
+
+                if [ "$HTTP_CODE" != "404" ]; then
+                    echo
+                    echo "HATA: Backend tag sorgusu beklenmeyen HTTP status döndürdü."
                     exit 1
                 fi
 
                 echo
-                echo "Backend test tag API üzerinden bulundu."
+                echo "Backend test tag mevcut değil."
+                echo "Backend tag oluşturma testine devam edilebilir."
             '''
         }
     }
 }
-stage('12D - Docker Hub Test Tag DELETE') {
+
+
+stage('12C - Docker Hub Frontend Test Tag Query') {
     steps {
-        echo '========== DOCKER HUB TEST TAG DELETE =========='
+        echo '========== DOCKER HUB FRONTEND TEST TAG QUERY =========='
 
         withCredentials([
             usernamePassword(
@@ -615,64 +624,44 @@ stage('12D - Docker Hub Test Tag DELETE') {
                 set -eu
                 set +x
 
-                echo "Backend test tag siliniyor..."
+                echo "Frontend test tag:"
+                echo "$TEST_FRONTEND_TAG"
 
                 HTTP_CODE=$(
                     curl \
                         -sS \
-                        -o /tmp/backend-delete.json \
+                        -o /tmp/frontend-tag.json \
                         -w "%{http_code}" \
-                        -X DELETE \
                         -u "${DOCKER_USERNAME}:${DOCKER_PASSWORD}" \
-                        "https://hub.docker.com/v2/repositories/${BACKEND_IMAGE}/tags/${TEST_BACKEND_TAG}/"
+                        "https://hub.docker.com/v2/repositories/${FRONTEND_IMAGE}/tags/${TEST_FRONTEND_TAG}"
                 )
 
                 echo
-                echo "Backend DELETE HTTP status: $HTTP_CODE"
+                echo "Frontend tag HTTP status: $HTTP_CODE"
 
-                cat /tmp/backend-delete.json || true
+                cat /tmp/frontend-tag.json || true
 
-                if [ "$HTTP_CODE" != "204" ]; then
+                if [ "$HTTP_CODE" = "200" ]; then
                     echo
-                    echo "Backend test tag SİLİNEMEDİ."
+                    echo "HATA: Frontend test tag ZATEN VAR!"
+                    echo "Aynı test tag'i tekrar kullanılamaz."
+                    exit 1
+                fi
+
+                if [ "$HTTP_CODE" != "404" ]; then
+                    echo
+                    echo "HATA: Frontend tag sorgusu beklenmeyen HTTP status döndürdü."
                     exit 1
                 fi
 
                 echo
-                echo "Backend test tag SILINDI."
-
-
-
-                echo
-                echo "Frontend test tag siliniyor..."
-
-                HTTP_CODE=$(
-                    curl \
-                        -sS \
-                        -o /tmp/frontend-delete.json \
-                        -w "%{http_code}" \
-                        -X DELETE \
-                        -u "${DOCKER_USERNAME}:${DOCKER_PASSWORD}" \
-                        "https://hub.docker.com/v2/repositories/${FRONTEND_IMAGE}/tags/${TEST_FRONTEND_TAG}/"
-                )
-
-                echo
-                echo "Frontend DELETE HTTP status: $HTTP_CODE"
-
-                cat /tmp/frontend-delete.json || true
-
-                if [ "$HTTP_CODE" != "204" ]; then
-                    echo
-                    echo "Frontend test tag SİLİNEMEDİ."
-                    exit 1
-                fi
-
-                echo
-                echo "Frontend test tag SILINDI."
+                echo "Frontend test tag mevcut değil."
+                echo "Frontend tag oluşturma testine devam edilebilir."
             '''
         }
     }
 }
+
 
 
 
