@@ -149,37 +149,39 @@ pipeline {
 
 
 
-     stage('04 - GitHub Branch Query') {
-        steps {
-            echo '========== TEST 04 - GITHUB BRANCH QUERY =========='
+        stage('04 - GitHub Branch Query') {
+            steps {
+                echo '========== TEST 04 - GITHUB BRANCH QUERY =========='
 
-            withCredentials([
-                string(
-                    credentialsId: 'github-token',
-                    variable: 'GITHUB_TOKEN'
-                )
-            ]) {
-                sh '''
-                    set -eu
-                    set +x
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'github-git-credentials',
+                        usernameVariable: 'GIT_USERNAME',
+                        passwordVariable: 'GIT_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+                        set +x
 
-                    echo "main branch sorgulanıyor..."
-                    echo "Git HTTP authentication test..."
+                        echo "main branch sorgulanıyor..."
 
-                    GIT_TERMINAL_PROMPT=0 \
-                    git \
-                        -c http.extraheader="Authorization: Bearer ${GITHUB_TOKEN}" \
-                        ls-remote \
-                        --heads \
-                        https://github.com/demirorsvolkan/todo.git \
-                        refs/heads/main
+                        git config --global credential.helper ""
 
-                    echo
-                    echo "main branch sorgusu OK."
-                '''
+                        git \
+                            -c credential.helper="!f() { echo username=$GIT_USERNAME; echo password=$GIT_TOKEN; }; f" \
+                            ls-remote \
+                            --heads \
+                            https://github.com/demirorsvolkan/todo.git \
+                            refs/heads/main
+
+                        echo
+                        echo "main branch sorgusu OK."
+                    '''
+                }
             }
         }
-    }
+
 
 
 
