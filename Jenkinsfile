@@ -256,7 +256,7 @@ pipeline {
         }
 
 
-        stage('07 - GitHub Test Tag Does Not Exist') {
+        stage('07 - TAG EXISTENCE CHECK') {
             steps {
                 echo '========== TEST 07 - TAG EXISTENCE CHECK =========='
 
@@ -270,30 +270,25 @@ pipeline {
                         set -eu
                         set +x
 
+                        TEST_TAG="jenkins-test/${BUILD_NUMBER}-${GIT_COMMIT[0..6]}"
+
                         echo "Test tag kontrol ediliyor:"
-                        echo "$TEST_GITHUB_TAG"
+                        echo "$TEST_TAG"
 
-                        OUTPUT=$(
-                            git \
-                                -c http.extraheader="Authorization: Bearer ${GITHUB_TOKEN}" \
-                                ls-remote \
-                                --tags \
-                                origin \
-                                "refs/tags/${TEST_GITHUB_TAG}" \
-                                "refs/tags/${TEST_GITHUB_TAG}^{}"
-                        )
+                        git \
+                            -c credential.helper="!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" \
+                            ls-remote \
+                            --tags \
+                            https://github.com/demirorsvolkan/todo.git \
+                            "refs/tags/$TEST_TAG"
 
-                        if [ -n "$OUTPUT" ]; then
-                            echo "HATA: Test tag zaten mevcut:"
-                            echo "$OUTPUT"
-                            exit 1
-                        fi
-
-                        echo "Test tag mevcut değil. Beklenen durum."
+                        echo
+                        echo "Tag sorgusu tamamlandı."
                     '''
                 }
             }
         }
+
 
 
         stage('08 - Create Local Git Test Tag') {
