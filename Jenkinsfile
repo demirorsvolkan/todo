@@ -4,641 +4,776 @@ pipeline {
     options {
         disableConcurrentBuilds()
         skipDefaultCheckout(true)
+        timestamps()
     }
 
     environment {
-        BACKEND_IMAGE = 'volkandemirors/todo-backend'
+        BACKEND_IMAGE  = 'volkandemirors/todo-backend'
         FRONTEND_IMAGE = 'volkandemirors/todo-frontend'
+
+        TEST_TAG_PREFIX = 'jenkins-test'
     }
 
     stages {
 
-        stage('Checkout') {
+        stage('01 - Checkout') {
             steps {
+                echo '========== TEST 01 - CHECKOUT =========='
+
                 checkout scm
 
                 sh '''
-                    set -e
+                    set -eu
+
+                    echo "Git version:"
+                    git --version
+
+                    echo
+                    echo "Remote:"
+                    git remote -v
+
+                    echo
+                    echo "Current commit:"
+                    git rev-parse HEAD
+
+                    echo
+                    echo "Current branch/ref:"
+                    git branch -a --show-current || true
+
+                    echo
+                    echo "Commit message:"
+                    git log -1 --pretty=%B
+                '''
+
+                sh '''
+                    set -eu
 
                     if [ -f .git/shallow ]; then
+                        echo "Repository shallow. Unshallow yapılıyor..."
                         git fetch --unshallow origin
                     fi
 
+                    echo "Fetching branches..."
+                    git fetch --force origin
+
+                    echo "Fetching tags..."
                     git fetch --tags --force origin
-                    git fetch origin main --force
                 '''
             }
         }
 
 
-        stage('Validate Trigger') {
+        stage('02 - GitHub Token Authentication') {
+            steps {
+                echo '========== TEST 02 - GITHUB AUTHENTICATION =========='
+
+                withCredentials([
+                    string(
+                        credentialsId: 'github-token',
+                        variable: 'GITHUB_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+                        set +x
+
+                        echo "GitHub token Jenkins credential'dan alındı."
+
+                        test -n "$GITHUB_TOKEN"
+
+                        echo "Token uzunluğu:"
+                        printf '%s' "$GITHUB_TOKEN" | wc -c
+
+                        echo
+                        echo "GitHub API authentication test ediliyor..."
+
+                        HTTP_CODE=$(
+                            curl \
+                                -sS \
+                                -o /tmp/github-user.json \
+                                -w '%{http_code}' \
+                                -H "Authorization: Bearer $GITHUB_TOKEN" \
+                                -H "Accept: application/vnd.github+json" \
+                                https://api.github.com/user
+                        )
+
+                        echo "GitHub API HTTP status: $HTTP_CODE"
+
+                        if [ "$HTTP_CODE" != "200" ]; then
+                            echo "GitHub token authentication BAŞARISIZ."
+                            cat /tmp/github-user.json || true
+                            exit 1
+                        fi
+
+                        echo "GitHub token authentication OK."
+                    '''
+                }
+            }
+        }
+
+
+        stage('03 - GitHub Repository Access') {
+            steps {
+                echo '========== TEST 03 - GITHUB REPOSITORY ACCESS =========='
+
+                withCredentials([
+                    string(
+                        credentialsId: 'github-token',
+                        variable: 'GITHUB_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+                        set +x
+
+                        echo "origin:"
+                        git remote get-url origin
+
+                        echo
+                        echo "GitHub repository erişimi test ediliyor..."
+
+                        git \
+                            -c http.extraheader="Authorization: Bearer ${GITHUB_TOKEN}" \
+                            ls-remote \
+                            origin \
+                            HEAD
+
+                        echo
+                        echo "Repository erişimi OK."
+                    '''
+                }
+            }
+        }
+
+
+        stage('04 - GitHub Branch Query') {
+            steps {
+                echo '========== TEST 04 - GITHUB BRANCH QUERY =========='
+
+                withCredentials([
+                    string(
+                        credentialsId: 'github-token',
+                        variable: 'GITHUB_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+                        set +x
+
+                        echo "main branch sorgulanıyor..."
+
+                        git \
+                            -c http.extraheader="Authorization: Bearer ${GITHUB_TOKEN}" \
+                            ls-remote \
+                            --heads \
+                            origin \
+                            refs/heads/main
+
+                        echo
+                        echo "Branch sorgusu OK."
+                    '''
+                }
+            }
+        }
+
+
+        stage('05 - Existing Git Tags Query') {
+            steps {
+                echo '========== TEST 05 - EXISTING TAGS =========='
+
+                withCredentials([
+                    string(
+                        credentialsId: 'github-token',
+                        variable: 'GITHUB_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+                        set +x
+
+                        echo "Remote tag'ler sorgulanıyor..."
+
+                        git \
+                            -c http.extraheader="Authorization: Bearer ${GITHUB_TOKEN}" \
+                            ls-remote \
+                            --tags \
+                            origin \
+                            > /tmp/remote-tags.txt
+
+                        echo
+                        echo "Remote tag sayısı:"
+                        wc -l /tmp/remote-tags.txt
+
+                        echo
+                        echo "İlk 20 tag:"
+                        head -20 /tmp/remote-tags.txt || true
+
+                        echo
+                        echo "Tag sorgusu OK."
+                    '''
+                }
+            }
+        }
+
+
+        stage('06 - Prepare Test Variables') {
             steps {
                 script {
 
-                    /*
-                     * Bunlar Declarative environment içinde DEĞİL.
-                     * Imperative env değişkeni olarak oluşturuluyor.
-                     * Böylece sonraki stage'lerde değiştirilebilir.
-                     */
-                    env.BACKEND_CHANGED = 'false'
-                    env.FRONTEND_CHANGED = 'false'
-
-                    env.BACKEND_SKIP = 'false'
-                    env.FRONTEND_SKIP = 'false'
-
-
-                    def isTagBuild = sh(
-                        script: '''
-                            if [ -n "${TAG_NAME:-}" ]; then
-                                exit 0
-                            fi
-
-                            if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
-                                exit 0
-                            fi
-
-                            exit 1
-                        ''',
-                        returnStatus: true
-                    ) == 0
-
-
-                    if (isTagBuild) {
-                        currentBuild.result = 'NOT_BUILT'
-                        error('Tag-triggered build ignored.')
-                    }
-
-
-                    env.TRIGGER_SHA = sh(
+                    env.TEST_SHA = sh(
                         script: 'git rev-parse HEAD',
                         returnStdout: true
                     ).trim()
 
-                    env.SHORT_SHA = env.TRIGGER_SHA.take(7)
+                    env.TEST_SHORT_SHA = env.TEST_SHA.take(7)
 
-                    env.COMMIT_MESSAGE = sh(
-                        script: 'git log -1 --pretty=%B',
-                        returnStdout: true
-                    ).trim()
+                    env.TEST_ID = "${env.BUILD_NUMBER}-${env.TEST_SHORT_SHA}"
 
+                    env.TEST_GITHUB_TAG =
+                        "jenkins-test/${env.TEST_ID}"
 
-                    echo "Trigger SHA    : ${env.TRIGGER_SHA}"
-                    echo "Short SHA      : ${env.SHORT_SHA}"
-                    echo "Commit message : ${env.COMMIT_MESSAGE}"
+                    env.TEST_BACKEND_VERSION =
+                        "jenkins-test-${env.TEST_ID}"
+
+                    env.TEST_FRONTEND_VERSION =
+                        "jenkins-test-${env.TEST_ID}"
+
+                    env.TEST_BACKEND_TAG =
+                        "jenkins-test-${env.TEST_ID}"
+
+                    env.TEST_FRONTEND_TAG =
+                        "jenkins-test-${env.TEST_ID}"
+
+                    echo '========== TEST 06 - VARIABLES =========='
+                    echo "Commit       : ${env.TEST_SHA}"
+                    echo "Short SHA    : ${env.TEST_SHORT_SHA}"
+                    echo "Test ID      : ${env.TEST_ID}"
+                    echo "GitHub tag   : ${env.TEST_GITHUB_TAG}"
+                    echo "Backend test : ${env.TEST_BACKEND_TAG}"
+                    echo "Frontend test: ${env.TEST_FRONTEND_TAG}"
                 }
             }
         }
 
 
-        stage('Detect Changes') {
+        stage('07 - GitHub Test Tag Does Not Exist') {
             steps {
-                script {
+                echo '========== TEST 07 - TAG EXISTENCE CHECK =========='
 
-                    /*
-                     * Her component için EN SON GEÇERLİ RELEASE TAG'INI bul.
-                     *
-                     * NONE:
-                     * O component için daha önce release yok.
-                     *
-                     * İlk release'de karşılaştırma YAPILMAZ.
-                     * Component release edilecek kabul edilir.
-                     */
-                    env.BACKEND_BASE_TAG = findLatestValidTag(
-                        'backend',
-                        env.TRIGGER_SHA
+                withCredentials([
+                    string(
+                        credentialsId: 'github-token',
+                        variable: 'GITHUB_TOKEN'
                     )
+                ]) {
+                    sh '''
+                        set -eu
+                        set +x
 
-                    env.FRONTEND_BASE_TAG = findLatestValidTag(
-                        'frontend',
-                        env.TRIGGER_SHA
+                        echo "Test tag kontrol ediliyor:"
+                        echo "$TEST_GITHUB_TAG"
+
+                        OUTPUT=$(
+                            git \
+                                -c http.extraheader="Authorization: Bearer ${GITHUB_TOKEN}" \
+                                ls-remote \
+                                --tags \
+                                origin \
+                                "refs/tags/${TEST_GITHUB_TAG}" \
+                                "refs/tags/${TEST_GITHUB_TAG}^{}"
+                        )
+
+                        if [ -n "$OUTPUT" ]; then
+                            echo "HATA: Test tag zaten mevcut:"
+                            echo "$OUTPUT"
+                            exit 1
+                        fi
+
+                        echo "Test tag mevcut değil. Beklenen durum."
+                    '''
+                }
+            }
+        }
+
+
+        stage('08 - Create Local Git Test Tag') {
+            steps {
+                echo '========== TEST 08 - CREATE LOCAL TAG =========='
+
+                sh '''
+                    set -eu
+
+                    echo "Local test tag oluşturuluyor..."
+
+                    git tag -a \
+                        "$TEST_GITHUB_TAG" \
+                        "$TEST_SHA" \
+                        -m "Jenkins integration test $TEST_ID"
+
+                    echo
+                    echo "Local tag:"
+                    git show-ref --tags "$TEST_GITHUB_TAG"
+
+                    echo
+                    echo "Tag commit:"
+                    git rev-list -n 1 "$TEST_GITHUB_TAG"
+
+                    echo
+                    echo "Beklenen commit:"
+                    echo "$TEST_SHA"
+                '''
+            }
+        }
+
+
+        stage('09 - Push GitHub Test Tag') {
+            steps {
+                echo '========== TEST 09 - PUSH GITHUB TAG =========='
+
+                withCredentials([
+                    string(
+                        credentialsId: 'github-token',
+                        variable: 'GITHUB_TOKEN'
                     )
+                ]) {
+                    sh '''
+                        set -eu
+                        set +x
 
+                        echo "GitHub test tag pushlanıyor..."
 
-                    // ========================================
-                    // BACKEND
-                    // ========================================
+                        git \
+                            -c http.extraheader="Authorization: Bearer ${GITHUB_TOKEN}" \
+                            push \
+                            origin \
+                            "$TEST_GITHUB_TAG"
 
-                    if (env.BACKEND_BASE_TAG == 'NONE') {
-
-                        /*
-                         * Daha önce backend release edilmemiş.
-                         *
-                         * Karşılaştırılacak backend release yok.
-                         * Bu nedenle ilk release oluşturulur.
-                         */
-                        env.BACKEND_CHANGED = 'true'
-
-                        echo 'Backend release : YOK'
-                        echo 'Backend mode    : FIRST RELEASE'
-                        echo 'Backend base    : 0.0.0'
-                        echo 'Backend diff    : YOK - ilk release'
-                        echo 'Backend changed : true'
-
-                    } else {
-
-                        /*
-                         * Daha önce release var.
-                         * Artık gerçek diff yapılır.
-                         */
-                        def backendCommit = getTagCommit(
-                            env.BACKEND_BASE_TAG
-                        )
-
-                        def backendChanged = gitDiffExists(
-                            backendCommit,
-                            env.TRIGGER_SHA,
-                            'backend/'
-                        )
-
-                        env.BACKEND_CHANGED =
-                            backendChanged ? 'true' : 'false'
-
-                        echo "Backend release : ${env.BACKEND_BASE_TAG}"
-                        echo "Backend commit  : ${backendCommit}"
-                        echo "Backend changed : ${env.BACKEND_CHANGED}"
-                    }
-
-
-                    // ========================================
-                    // FRONTEND
-                    // ========================================
-
-                    if (env.FRONTEND_BASE_TAG == 'NONE') {
-
-                        /*
-                         * Daha önce frontend release edilmemiş.
-                         *
-                         * Karşılaştırılacak frontend release yok.
-                         * İlk release oluşturulur.
-                         */
-                        env.FRONTEND_CHANGED = 'true'
-
-                        echo 'Frontend release : YOK'
-                        echo 'Frontend mode    : FIRST RELEASE'
-                        echo 'Frontend base    : 0.0.0'
-                        echo 'Frontend diff    : YOK - ilk release'
-                        echo 'Frontend changed : true'
-
-                    } else {
-
-                        /*
-                         * Daha önce release var.
-                         * Artık gerçek diff yapılır.
-                         */
-                        def frontendCommit = getTagCommit(
-                            env.FRONTEND_BASE_TAG
-                        )
-
-                        def frontendChanged = gitDiffExists(
-                            frontendCommit,
-                            env.TRIGGER_SHA,
-                            'frontend/'
-                        )
-
-                        env.FRONTEND_CHANGED =
-                            frontendChanged ? 'true' : 'false'
-
-                        echo "Frontend release : ${env.FRONTEND_BASE_TAG}"
-                        echo "Frontend commit  : ${frontendCommit}"
-                        echo "Frontend changed : ${env.FRONTEND_CHANGED}"
-                    }
-
-
-                    echo '========================================'
-                    echo "Backend base    : ${env.BACKEND_BASE_TAG}"
-                    echo "Backend changed : ${env.BACKEND_CHANGED}"
-                    echo "Frontend base   : ${env.FRONTEND_BASE_TAG}"
-                    echo "Frontend changed: ${env.FRONTEND_CHANGED}"
-                    echo '========================================'
-
-
-                    /*
-                     * Gerçekten hiçbir component değişmediyse
-                     * release yapma.
-                     */
-                    if (
-                        env.BACKEND_CHANGED != 'true' &&
-                        env.FRONTEND_CHANGED != 'true'
-                    ) {
-                        error(
-                            'Backend veya frontend değişmedi.'
-                        )
-                    }
+                        echo
+                        echo "GitHub tag push OK."
+                    '''
                 }
             }
         }
 
 
-        stage('Calculate Versions') {
+        stage('10 - Verify GitHub Test Tag') {
             steps {
-                script {
+                echo '========== TEST 10 - VERIFY GITHUB TAG =========='
 
-                    /*
-                     * Commit mesajı version bump türünü belirler.
-                     *
-                     * feat!: -> major
-                     * feat:  -> minor
-                     * diğer  -> patch
-                     */
-                    def versionType = 'patch'
+                withCredentials([
+                    string(
+                        credentialsId: 'github-token',
+                        variable: 'GITHUB_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+                        set +x
 
-                    if (env.COMMIT_MESSAGE =~ '(?m)^feat!:') {
-                        versionType = 'major'
+                        echo "Pushlanan tag tekrar sorgulanıyor..."
 
-                    } else if (env.COMMIT_MESSAGE =~ '(?m)^feat:') {
-                        versionType = 'minor'
-                    }
+                        OUTPUT=$(
+                            git \
+                                -c http.extraheader="Authorization: Bearer ${GITHUB_TOKEN}" \
+                                ls-remote \
+                                --tags \
+                                origin \
+                                "refs/tags/${TEST_GITHUB_TAG}" \
+                                "refs/tags/${TEST_GITHUB_TAG}^{}"
+                        )
 
+                        if [ -z "$OUTPUT" ]; then
+                            echo "HATA: GitHub test tag bulunamadı."
+                            exit 1
+                        fi
 
-                    // ========================================
-                    // BACKEND VERSION
-                    // ========================================
+                        echo
+                        echo "$OUTPUT"
 
-                    if (env.BACKEND_CHANGED == 'true') {
+                        REMOTE_COMMIT=$(
+                            printf '%s\\n' "$OUTPUT" |
+                            awk \
+                                -v tag="$TEST_GITHUB_TAG" \
+                                '$2 == "refs/tags/" tag "^{}" {
+                                    print $1
+                                    exit
+                                }'
+                        )
 
-                        if (env.BACKEND_BASE_TAG == 'NONE') {
+                        if [ -z "$REMOTE_COMMIT" ]; then
+                            REMOTE_COMMIT=$(
+                                printf '%s\\n' "$OUTPUT" |
+                                awk \
+                                    -v tag="$TEST_GITHUB_TAG" \
+                                    '$2 == "refs/tags/" tag {
+                                        print $1
+                                        exit
+                                    }'
+                            )
+                        fi
 
-                            /*
-                             * İlk release:
-                             *
-                             * base = 0.0.0
-                             *
-                             * patch -> 0.0.1
-                             * minor -> 0.1.0
-                             * major -> 1.0.0
-                             */
-                            if (versionType == 'major') {
+                        echo
+                        echo "Remote tag commit:"
+                        echo "$REMOTE_COMMIT"
 
-                                env.BACKEND_VERSION = '1.0.0'
+                        echo
+                        echo "Expected commit:"
+                        echo "$TEST_SHA"
 
-                            } else if (versionType == 'minor') {
+                        if [ "$REMOTE_COMMIT" != "$TEST_SHA" ]; then
+                            echo "HATA: GitHub tag yanlış commit'i gösteriyor."
+                            exit 1
+                        fi
 
-                                env.BACKEND_VERSION = '0.1.0'
-
-                            } else {
-
-                                env.BACKEND_VERSION = '0.0.1'
-                            }
-
-                        } else {
-
-                            def matcher =
-                                env.BACKEND_BASE_TAG =~
-                                '^backend/v([0-9]+)\\.([0-9]+)\\.([0-9]+)-sha\\.[0-9a-fA-F]+$'
-
-
-                            if (!matcher.matches()) {
-                                error(
-                                    "Geçersiz backend base tag: " +
-                                    env.BACKEND_BASE_TAG
-                                )
-                            }
-
-
-                            int major = matcher[0][1] as int
-                            int minor = matcher[0][2] as int
-                            int patch = matcher[0][3] as int
-
-
-                            if (versionType == 'major') {
-
-                                major++
-                                minor = 0
-                                patch = 0
-
-                            } else if (versionType == 'minor') {
-
-                                minor++
-                                patch = 0
-
-                            } else {
-
-                                patch++
-                            }
-
-
-                            env.BACKEND_VERSION =
-                                "${major}.${minor}.${patch}"
-                        }
-
-
-                        env.BACKEND_TAG =
-                            "backend/v${env.BACKEND_VERSION}-sha.${env.SHORT_SHA}"
-                    }
-
-
-                    // ========================================
-                    // FRONTEND VERSION
-                    // ========================================
-
-                    if (env.FRONTEND_CHANGED == 'true') {
-
-                        if (env.FRONTEND_BASE_TAG == 'NONE') {
-
-                            /*
-                             * İlk release:
-                             *
-                             * base = 0.0.0
-                             */
-                            if (versionType == 'major') {
-
-                                env.FRONTEND_VERSION = '1.0.0'
-
-                            } else if (versionType == 'minor') {
-
-                                env.FRONTEND_VERSION = '0.1.0'
-
-                            } else {
-
-                                env.FRONTEND_VERSION = '0.0.1'
-                            }
-
-                        } else {
-
-                            def matcher =
-                                env.FRONTEND_BASE_TAG =~
-                                '^frontend/v([0-9]+)\\.([0-9]+)\\.([0-9]+)-sha\\.[0-9a-fA-F]+$'
-
-
-                            if (!matcher.matches()) {
-                                error(
-                                    "Geçersiz frontend base tag: " +
-                                    env.FRONTEND_BASE_TAG
-                                )
-                            }
-
-
-                            int major = matcher[0][1] as int
-                            int minor = matcher[0][2] as int
-                            int patch = matcher[0][3] as int
-
-
-                            if (versionType == 'major') {
-
-                                major++
-                                minor = 0
-                                patch = 0
-
-                            } else if (versionType == 'minor') {
-
-                                minor++
-                                patch = 0
-
-                            } else {
-
-                                patch++
-                            }
-
-
-                            env.FRONTEND_VERSION =
-                                "${major}.${minor}.${patch}"
-                        }
-
-
-                        env.FRONTEND_TAG =
-                            "frontend/v${env.FRONTEND_VERSION}-sha.${env.SHORT_SHA}"
-                    }
-
-
-                    echo "Version type     : ${versionType}"
-                    echo "Backend version  : ${env.BACKEND_VERSION ?: '-'}"
-                    echo "Frontend version : ${env.FRONTEND_VERSION ?: '-'}"
+                        echo
+                        echo "GitHub tag doğrulaması OK."
+                    '''
                 }
             }
         }
 
 
-        stage('Docker Hub Check') {
+        stage('11 - Docker Hub Login') {
             steps {
-                script {
+                echo '========== TEST 11 - DOCKER HUB LOGIN =========='
 
-                    withCredentials([
-                        usernamePassword(
-                            credentialsId: 'dockerhub-credentials',
-                            usernameVariable: 'DOCKER_USERNAME',
-                            passwordVariable: 'DOCKER_PASSWORD'
-                        ),
-                        string(
-                            credentialsId: 'github-token',
-                            variable: 'GITHUB_TOKEN'
-                        )
-                    ]) {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKER_USERNAME',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+                        set +x
 
-                        sh '''
-                            set -e
-                            set +x
+                        test -n "$DOCKER_USERNAME"
+                        test -n "$DOCKER_PASSWORD"
 
-                            echo "$DOCKER_PASSWORD" |
-                                docker login \
-                                -u "$DOCKER_USERNAME" \
+                        echo "Docker Hub login deneniyor..."
+
+                        printf '%s\\n' "$DOCKER_PASSWORD" |
+                            docker login \
+                                --username "$DOCKER_USERNAME" \
                                 --password-stdin
-                        '''
 
-
-                        if (
-                            env.BACKEND_CHANGED == 'true' &&
-                            env.BACKEND_SKIP != 'true'
-                        ) {
-
-                            if (
-                                checkDockerImage(
-                                    env.BACKEND_IMAGE,
-                                    env.BACKEND_VERSION,
-                                    env.SHORT_SHA,
-                                    env.BACKEND_TAG,
-                                    env.TRIGGER_SHA
-                                ) == 'SKIP'
-                            ) {
-                                env.BACKEND_SKIP = 'true'
-                            }
-                        }
-
-
-                        if (
-                            env.FRONTEND_CHANGED == 'true' &&
-                            env.FRONTEND_SKIP != 'true'
-                        ) {
-
-                            if (
-                                checkDockerImage(
-                                    env.FRONTEND_IMAGE,
-                                    env.FRONTEND_VERSION,
-                                    env.SHORT_SHA,
-                                    env.FRONTEND_TAG,
-                                    env.TRIGGER_SHA
-                                ) == 'SKIP'
-                            ) {
-                                env.FRONTEND_SKIP = 'true'
-                            }
-                        }
-                    }
+                        echo
+                        echo "Docker Hub login OK."
+                    '''
                 }
             }
         }
 
 
-        stage('Build Images') {
+        stage('12 - Docker Hub Repository Access') {
             steps {
-                script {
+                echo '========== TEST 12 - DOCKER HUB REPOSITORY ACCESS =========='
 
-                    if (
-                        env.BACKEND_CHANGED == 'true' &&
-                        env.BACKEND_SKIP != 'true'
-                    ) {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKER_USERNAME',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+                        set +x
 
-                        withEnv([
-                            "IMAGE=${env.BACKEND_IMAGE}",
-                            "VERSION=${env.BACKEND_VERSION}",
-                            "SHA=${env.SHORT_SHA}"
-                        ]) {
+                        echo "Backend repository kontrolü..."
 
-                            sh '''
-                                set -e
+                        docker manifest inspect \
+                            "$BACKEND_IMAGE:latest" \
+                            >/dev/null 2>&1 || true
 
-                                docker build \
-                                    -t "$IMAGE:v$VERSION" \
-                                    -t "$IMAGE:sha-$SHA" \
-                                    ./backend
-                            '''
-                        }
-                    }
+                        echo "Backend repository erişim sorgusu tamamlandı."
 
+                        echo
+                        echo "Frontend repository kontrolü..."
 
-                    if (
-                        env.FRONTEND_CHANGED == 'true' &&
-                        env.FRONTEND_SKIP != 'true'
-                    ) {
+                        docker manifest inspect \
+                            "$FRONTEND_IMAGE:latest" \
+                            >/dev/null 2>&1 || true
 
-                        withEnv([
-                            "IMAGE=${env.FRONTEND_IMAGE}",
-                            "VERSION=${env.FRONTEND_VERSION}",
-                            "SHA=${env.SHORT_SHA}"
-                        ]) {
-
-                            sh '''
-                                set -e
-
-                                docker build \
-                                    -t "$IMAGE:v$VERSION" \
-                                    -t "$IMAGE:sha-$SHA" \
-                                    ./frontend
-                            '''
-                        }
-                    }
+                        echo "Frontend repository erişim sorgusu tamamlandı."
+                    '''
                 }
             }
         }
 
 
-        stage('Push Images') {
+        stage('13 - Docker Existing Tags Query') {
             steps {
-                script {
+                echo '========== TEST 13 - DOCKER EXISTING TAGS =========='
 
-                    if (
-                        env.BACKEND_CHANGED == 'true' &&
-                        env.BACKEND_SKIP != 'true'
-                    ) {
+                sh '''
+                    set -eu
 
-                        withEnv([
-                            "IMAGE=${env.BACKEND_IMAGE}",
-                            "VERSION=${env.BACKEND_VERSION}",
-                            "SHA=${env.SHORT_SHA}"
-                        ]) {
+                    echo "Backend latest manifest:"
+                    docker manifest inspect \
+                        "$BACKEND_IMAGE:latest" \
+                        2>&1 || true
 
-                            sh '''
-                                set -e
-
-                                docker push "$IMAGE:v$VERSION"
-                                docker push "$IMAGE:sha-$SHA"
-                            '''
-                        }
-                    }
-
-
-                    if (
-                        env.FRONTEND_CHANGED == 'true' &&
-                        env.FRONTEND_SKIP != 'true'
-                    ) {
-
-                        withEnv([
-                            "IMAGE=${env.FRONTEND_IMAGE}",
-                            "VERSION=${env.FRONTEND_VERSION}",
-                            "SHA=${env.SHORT_SHA}"
-                        ]) {
-
-                            sh '''
-                                set -e
-
-                                docker push "$IMAGE:v$VERSION"
-                                docker push "$IMAGE:sha-$SHA"
-                            '''
-                        }
-                    }
-                }
+                    echo
+                    echo "Frontend latest manifest:"
+                    docker manifest inspect \
+                        "$FRONTEND_IMAGE:latest" \
+                        2>&1 || true
+                '''
             }
         }
 
 
-        stage('Create GitHub Tags') {
+        stage('14 - Docker Build Backend') {
             steps {
-                script {
+                echo '========== TEST 14 - BUILD BACKEND =========='
 
-                    withCredentials([
-                        string(
-                            credentialsId: 'github-token',
-                            variable: 'GITHUB_TOKEN'
-                        )
-                    ]) {
+                sh '''
+                    set -eu
 
-                        if (
-                            env.BACKEND_CHANGED == 'true' &&
-                            env.BACKEND_SKIP != 'true'
-                        ) {
+                    test -d backend
 
-                            withEnv([
-                                "CREATE_TAG=${env.BACKEND_TAG}",
-                                "CREATE_SHA=${env.TRIGGER_SHA}"
-                            ]) {
+                    echo "Backend Dockerfile:"
+                    test -f backend/Dockerfile
 
-                                sh '''
-                                    set -e
-                                    set +x
+                    echo
+                    echo "Backend image build başlıyor..."
 
-                                    git -c http.extraheader="AUTHORIZATION: Bearer $GITHUB_TOKEN" \
-                                        tag -a "$CREATE_TAG" "$CREATE_SHA" \
-                                        -m "Release $CREATE_TAG"
+                    docker build \
+                        -t "$BACKEND_IMAGE:$TEST_BACKEND_TAG" \
+                        ./backend
 
-                                    git -c http.extraheader="AUTHORIZATION: Bearer $GITHUB_TOKEN" \
-                                        push origin "$CREATE_TAG"
-                                '''
-                            }
-                        }
+                    echo
+                    echo "Backend build OK."
+                '''
+            }
+        }
 
 
-                        if (
-                            env.FRONTEND_CHANGED == 'true' &&
-                            env.FRONTEND_SKIP != 'true'
-                        ) {
+        stage('15 - Docker Build Frontend') {
+            steps {
+                echo '========== TEST 15 - BUILD FRONTEND =========='
 
-                            withEnv([
-                                "CREATE_TAG=${env.FRONTEND_TAG}",
-                                "CREATE_SHA=${env.TRIGGER_SHA}"
-                            ]) {
+                sh '''
+                    set -eu
 
-                                sh '''
-                                    set -e
-                                    set +x
+                    test -d frontend
 
-                                    git -c http.extraheader="AUTHORIZATION: Bearer $GITHUB_TOKEN" \
-                                        tag -a "$CREATE_TAG" "$CREATE_SHA" \
-                                        -m "Release $CREATE_TAG"
+                    echo "Frontend Dockerfile:"
+                    test -f frontend/Dockerfile
 
-                                    git -c http.extraheader="AUTHORIZATION: Bearer $GITHUB_TOKEN" \
-                                        push origin "$CREATE_TAG"
-                                '''
-                            }
-                        }
-                    }
+                    echo
+                    echo "Frontend image build başlıyor..."
+
+                    docker build \
+                        -t "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG" \
+                        ./frontend
+
+                    echo
+                    echo "Frontend build OK."
+                '''
+            }
+        }
+
+
+        stage('16 - Docker Local Image Verification') {
+            steps {
+                echo '========== TEST 16 - LOCAL IMAGE VERIFICATION =========='
+
+                sh '''
+                    set -eu
+
+                    echo "Backend image:"
+                    docker image inspect \
+                        "$BACKEND_IMAGE:$TEST_BACKEND_TAG" \
+                        >/dev/null
+
+                    echo "Backend image OK."
+
+                    echo
+                    echo "Frontend image:"
+                    docker image inspect \
+                        "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG" \
+                        >/dev/null
+
+                    echo "Frontend image OK."
+                '''
+            }
+        }
+
+
+        stage('17 - Push Backend Test Image') {
+            steps {
+                echo '========== TEST 17 - PUSH BACKEND IMAGE =========='
+
+                sh '''
+                    set -eu
+
+                    echo "Backend test image pushlanıyor..."
+
+                    docker push \
+                        "$BACKEND_IMAGE:$TEST_BACKEND_TAG"
+
+                    echo
+                    echo "Backend Docker push OK."
+                '''
+            }
+        }
+
+
+        stage('18 - Push Frontend Test Image') {
+            steps {
+                echo '========== TEST 18 - PUSH FRONTEND IMAGE =========='
+
+                sh '''
+                    set -eu
+
+                    echo "Frontend test image pushlanıyor..."
+
+                    docker push \
+                        "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG"
+
+                    echo
+                    echo "Frontend Docker push OK."
+                '''
+            }
+        }
+
+
+        stage('19 - Verify Backend Docker Image') {
+            steps {
+                echo '========== TEST 19 - VERIFY BACKEND IMAGE =========='
+
+                sh '''
+                    set -eu
+
+                    echo "Backend remote image kontrol ediliyor..."
+
+                    docker manifest inspect \
+                        "$BACKEND_IMAGE:$TEST_BACKEND_TAG"
+
+                    echo
+                    echo "Backend remote image OK."
+                '''
+            }
+        }
+
+
+        stage('20 - Verify Frontend Docker Image') {
+            steps {
+                echo '========== TEST 20 - VERIFY FRONTEND IMAGE =========='
+
+                sh '''
+                    set -eu
+
+                    echo "Frontend remote image kontrol ediliyor..."
+
+                    docker manifest inspect \
+                        "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG"
+
+                    echo
+                    echo "Frontend remote image OK."
+                '''
+            }
+        }
+
+
+        stage('21 - Backend Digest') {
+            steps {
+                echo '========== TEST 21 - BACKEND DIGEST =========='
+
+                sh '''
+                    set -eu
+
+                    docker buildx imagetools inspect \
+                        "$BACKEND_IMAGE:$TEST_BACKEND_TAG" |
+                    grep -m 1 '^Digest:' |
+                    awk '{print $2}' |
+                    tee /tmp/backend-digest.txt
+
+                    test -s /tmp/backend-digest.txt
+
+                    echo
+                    echo "Backend digest OK."
+                '''
+            }
+        }
+
+
+        stage('22 - Frontend Digest') {
+            steps {
+                echo '========== TEST 22 - FRONTEND DIGEST =========='
+
+                sh '''
+                    set -eu
+
+                    docker buildx imagetools inspect \
+                        "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG" |
+                    grep -m 1 '^Digest:' |
+                    awk '{print $2}' |
+                    tee /tmp/frontend-digest.txt
+
+                    test -s /tmp/frontend-digest.txt
+
+                    echo
+                    echo "Frontend digest OK."
+                '''
+            }
+        }
+
+
+        stage('23 - Final Integration Verification') {
+            steps {
+                echo '========== TEST 23 - FINAL INTEGRATION CHECK =========='
+
+                withCredentials([
+                    string(
+                        credentialsId: 'github-token',
+                        variable: 'GITHUB_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+                        set +x
+
+                        echo "========================================"
+                        echo "FINAL TEST"
+                        echo "========================================"
+
+                        echo
+                        echo "GitHub:"
+                        echo "  Repository access : OK"
+                        echo "  Tag push           : OK"
+                        echo "  Tag verification   : OK"
+
+                        echo
+                        echo "Docker Hub:"
+                        echo "  Login              : OK"
+                        echo "  Backend build      : OK"
+                        echo "  Backend push       : OK"
+                        echo "  Backend verify     : OK"
+                        echo "  Frontend build     : OK"
+                        echo "  Frontend push      : OK"
+                        echo "  Frontend verify    : OK"
+
+                        echo
+                        echo "Test GitHub tag:"
+                        echo "$TEST_GITHUB_TAG"
+
+                        echo
+                        echo "Backend test image:"
+                        echo "$BACKEND_IMAGE:$TEST_BACKEND_TAG"
+
+                        echo
+                        echo "Frontend test image:"
+                        echo "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG"
+
+                        echo
+                        echo "========================================"
+                        echo "ALL TESTS PASSED"
+                        echo "========================================"
+                    '''
                 }
             }
         }
@@ -648,512 +783,131 @@ pipeline {
     post {
 
         success {
-            echo 'Release başarılı!'
+            echo '''
+========================================
+JENKINS INTEGRATION TEST: SUCCESS
+========================================
+GitHub authentication      : OK
+GitHub repository access   : OK
+GitHub tag create/push     : OK
+GitHub tag verification    : OK
+Docker Hub authentication  : OK
+Docker backend build/push  : OK
+Docker frontend build/push : OK
+Docker image verification  : OK
+========================================
+'''
         }
+
+
+        failure {
+            echo '''
+========================================
+JENKINS INTEGRATION TEST: FAILED
+========================================
+Yukarıdaki son "TEST XX" aşaması
+başarısız olan operasyonu gösterir.
+========================================
+'''
+        }
+
 
         always {
-            sh 'docker logout || true'
-        }
-    }
-}
-
-
-/*
- * ============================================================
- * FIND LATEST VALID RELEASE TAG
- * ============================================================
- */
-def findLatestValidTag(
-    String component,
-    String triggerSha
-) {
-
-    def tags = withEnv([
-        "COMPONENT=${component}",
-        "TRIGGER_SHA=${triggerSha}"
-    ]) {
-
-        sh(
-            script: '''
-                git tag --merged "$TRIGGER_SHA" --sort=-v:refname |
-                grep -E "^${COMPONENT}/v[0-9]+\\.[0-9]+\\.[0-9]+-sha\\.[0-9a-fA-F]+$" ||
-                true
-            ''',
-            returnStdout: true
-        ).trim()
-    }
-
-
-    /*
-     * Hiç release yok.
-     */
-    if (!tags) {
-        return 'NONE'
-    }
-
-
-    /*
-     * En yeni tag'dan başlayarak
-     * tag formatını ve tag commit SHA'sını doğrula.
-     */
-    for (String tag : tags.split('\n')) {
-
-        tag = tag.trim()
-
-        if (!tag) {
-            continue
-        }
-
-
-        def parts = parseTag(
-            tag,
-            component
-        )
-
-        def tagSha = parts[3]
-
-        def tagCommit = getTagCommit(tag)
-
-
-        /*
-         * Tag isminde bulunan SHA,
-         * tag'ın işaret ettiği commit'in
-         * başlangıcıyla eşleşmeli.
-         */
-        if (
-            tagCommit
-                .toLowerCase()
-                .startsWith(tagSha.toLowerCase())
-        ) {
-            return tag
-        }
-    }
-
-
-    /*
-     * Formatı uygun tag bulundu ama
-     * geçerli release bulunamadı.
-     *
-     * Bu component için ilk release kabul edilir.
-     */
-    return 'NONE'
-}
-
-
-/*
- * ============================================================
- * PARSE TAG
- * ============================================================
- */
-def parseTag(
-    String tag,
-    String component
-) {
-
-    def prefix = "${component}/v"
-    def suffix = '-sha.'
-
 
-    if (
-        !tag.startsWith(prefix) ||
-        !tag.contains(suffix)
-    ) {
-        error("Geçersiz tag: ${tag}")
-    }
-
-
-    def value = tag.substring(
-        prefix.length()
-    )
-
-    def index = value.indexOf(suffix)
-
-
-    if (index < 0) {
-        error("Geçersiz tag: ${tag}")
-    }
-
-
-    def version = value.substring(
-        0,
-        index
-    )
-
-    def sha = value.substring(
-        index + suffix.length()
-    )
-
-    def numbers = version.split('\\.')
-
-
-    if (
-        numbers.size() != 3 ||
-        !numbers[0].isInteger() ||
-        !numbers[1].isInteger() ||
-        !numbers[2].isInteger() ||
-        !sha.matches('[0-9a-fA-F]+')
-    ) {
-        error("Geçersiz tag: ${tag}")
-    }
-
-
-    return [
-        numbers[0] as int,
-        numbers[1] as int,
-        numbers[2] as int,
-        sha
-    ]
-}
-
-
-/*
- * ============================================================
- * GET TAG COMMIT
- * ============================================================
- */
-def getTagCommit(String tag) {
-
-    if (
-        !tag ||
-        tag == 'NONE'
-    ) {
-        error(
-            "Commit alınacak geçerli tag yok: ${tag}"
-        )
-    }
-
-
-    return withEnv([
-        "RELEASE_TAG=${tag}"
-    ]) {
-
-        sh(
-            script: '''
-                set -e
-
-                git rev-list \
-                    -n 1 \
-                    "$RELEASE_TAG"
-            ''',
-            returnStdout: true
-        ).trim()
-    }
-}
-
-
-/*
- * ============================================================
- * GIT DIFF
- * ============================================================
- *
- * SADECE daha önce release edilmiş
- * component'lerde çağrılır.
- */
-def gitDiffExists(
-    String oldCommit,
-    String newCommit,
-    String componentPath
-) {
-
-    if (!oldCommit) {
-        error(
-            "Diff için eski commit bulunamadı: " +
-            componentPath
-        )
-    }
-
-
-    if (!newCommit) {
-        error(
-            "Diff için yeni commit bulunamadı: " +
-            componentPath
-        )
-    }
-
-
-    def result = withEnv([
-        "OLD_COMMIT=${oldCommit}",
-        "NEW_COMMIT=${newCommit}",
-        "COMPONENT_PATH=${componentPath}"
-    ]) {
-
-        sh(
-            script: '''
-                git diff --quiet \
-                    "$OLD_COMMIT" \
-                    "$NEW_COMMIT" \
-                    -- \
-                    "$COMPONENT_PATH"
-            ''',
-            returnStatus: true
-        )
-    }
-
-
-    /*
-     * 0 = değişiklik yok
-     * 1 = değişiklik var
-     * diğer = git hatası
-     */
-    if (result == 0) {
-        return false
-    }
-
-
-    if (result == 1) {
-        return true
-    }
-
-
-    error(
-        "Git diff failed: ${componentPath}"
-    )
-}
-
-
-/*
- * ============================================================
- * DOCKER HUB / GITHUB RELEASE CHECK
- * ============================================================
- */
-def checkDockerImage(
-    String image,
-    String version,
-    String sha,
-    String githubTag,
-    String triggerSha
-) {
-
-    /*
-     * GitHub'da release tag var mı?
-     */
-    def remoteTagOutput = withEnv([
-        "TAG_TO_CHECK=${githubTag}"
-    ]) {
-
-        sh(
-            script: '''
-                set -e
-
-                git -c http.extraheader="AUTHORIZATION: Bearer $GITHUB_TOKEN" \
-                    ls-remote \
-                    --tags \
-                    origin \
-                    "refs/tags/$TAG_TO_CHECK" \
-                    "refs/tags/$TAG_TO_CHECK^{}"
-            ''',
-            returnStdout: true
-        ).trim()
-    }
-
-
-    def remoteTagCommit = ''
-
-
-    if (remoteTagOutput) {
-
-        /*
-         * Önce annotated tag'ın peeled commit'ini al.
-         */
-        remoteTagCommit = withEnv([
-            "REMOTE_TAG_OUTPUT=${remoteTagOutput}",
-            "EXPECTED_TAG=${githubTag}"
-        ]) {
-
-            sh(
-                script: '''
-                    printf '%s\\n' "$REMOTE_TAG_OUTPUT" |
-                    awk \
-                        -v tag="$EXPECTED_TAG" \
-                        '$2 == "refs/tags/" tag "^{}" {
-                            print $1
-                            exit
-                        }'
-                ''',
-                returnStdout: true
-            ).trim()
-        }
-
-
-        /*
-         * Peeled kayıt yoksa normal tag SHA'sını al.
-         */
-        if (!remoteTagCommit) {
-
-            remoteTagCommit = withEnv([
-                "REMOTE_TAG_OUTPUT=${remoteTagOutput}",
-                "EXPECTED_TAG=${githubTag}"
-            ]) {
-
-                sh(
-                    script: '''
-                        printf '%s\\n' "$REMOTE_TAG_OUTPUT" |
-                        awk \
-                            -v tag="$EXPECTED_TAG" \
-                            '$2 == "refs/tags/" tag {
-                                print $1
-                                exit
-                            }'
-                    ''',
-                    returnStdout: true
-                ).trim()
+            script {
+
+                echo '========== CLEANUP =========='
+
+                sh '''
+                    set +e
+
+                    echo "Local Git test tag siliniyor..."
+
+                    git tag -d "$TEST_GITHUB_TAG" \
+                        >/dev/null 2>&1 || true
+
+                    echo "Local Docker backend image siliniyor..."
+
+                    docker rmi \
+                        "$BACKEND_IMAGE:$TEST_BACKEND_TAG" \
+                        >/dev/null 2>&1 || true
+
+                    echo "Local Docker frontend image siliniyor..."
+
+                    docker rmi \
+                        "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG" \
+                        >/dev/null 2>&1 || true
+                '''
+
+
+                /*
+                 * Gerçek remote cleanup.
+                 *
+                 * Sadece bu testin oluşturduğu isimler silinir.
+                 */
+                withCredentials([
+                    string(
+                        credentialsId: 'github-token',
+                        variable: 'GITHUB_TOKEN'
+                    ),
+                    usernamePassword(
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKER_USERNAME',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )
+                ]) {
+
+                    sh '''
+                        set +e
+                        set +x
+
+                        echo
+                        echo "Remote GitHub test tag cleanup..."
+
+                        git \
+                            -c http.extraheader="Authorization: Bearer ${GITHUB_TOKEN}" \
+                            push \
+                            origin \
+                            --delete \
+                            "$TEST_GITHUB_TAG" \
+                            >/dev/null 2>&1 || true
+
+                        echo "GitHub cleanup tamamlandı."
+
+                        echo
+                        echo "Docker backend test tag cleanup..."
+
+                        curl \
+                            -sS \
+                            -X DELETE \
+                            -u "${DOCKER_USERNAME}:${DOCKER_PASSWORD}" \
+                            "https://hub.docker.com/v2/repositories/${BACKEND_IMAGE}/tags/${TEST_BACKEND_TAG}/" \
+                            >/dev/null 2>&1 || true
+
+                        echo "Backend cleanup tamamlandı."
+
+                        echo
+                        echo "Docker frontend test tag cleanup..."
+
+                        curl \
+                            -sS \
+                            -X DELETE \
+                            -u "${DOCKER_USERNAME}:${DOCKER_PASSWORD}" \
+                            "https://hub.docker.com/v2/repositories/${FRONTEND_IMAGE}/tags/${TEST_FRONTEND_TAG}/" \
+                            >/dev/null 2>&1 || true
+
+                        echo "Frontend cleanup tamamlandı."
+
+                        echo
+                        echo "Docker logout..."
+
+                        docker logout >/dev/null 2>&1 || true
+
+                        echo
+                        echo "Cleanup tamamlandı."
+                    '''
+                }
             }
         }
-
-
-        if (!remoteTagCommit) {
-            error(
-                "GitHub tag commit alınamadı: " +
-                githubTag
-            )
-        }
-
-
-        if (
-            !remoteTagCommit.equalsIgnoreCase(
-                triggerSha
-            )
-        ) {
-            error(
-                "GitHub tag yanlış commit'i gösteriyor: " +
-                githubTag
-            )
-        }
     }
-
-
-    /*
-     * Docker version tag var mı?
-     */
-    def versionExists = withEnv([
-        "IMAGE=${image}",
-        "VERSION=${version}"
-    ]) {
-
-        sh(
-            script: '''
-                docker manifest inspect \
-                    "$IMAGE:v$VERSION" \
-                    >/dev/null 2>&1
-            ''',
-            returnStatus: true
-        ) == 0
-    }
-
-
-    /*
-     * Hiçbir şey yok:
-     * BUILD
-     */
-    if (
-        !versionExists &&
-        !remoteTagOutput
-    ) {
-        return 'BUILD'
-    }
-
-
-    /*
-     * GitHub release var fakat Docker image yok.
-     * Tutarsız durum.
-     */
-    if (
-        !versionExists &&
-        remoteTagOutput
-    ) {
-        error(
-            "GitHub tag var fakat Docker image yok: " +
-            "${image}:v${version}"
-        )
-    }
-
-
-    /*
-     * Docker version image digest.
-     */
-    def versionDigest = withEnv([
-        "IMAGE=${image}",
-        "VERSION=${version}"
-    ]) {
-
-        sh(
-            script: '''
-                set -e
-
-                docker buildx imagetools inspect \
-                    "$IMAGE:v$VERSION" |
-                grep -m 1 '^Digest:' |
-                awk '{print $2}'
-            ''',
-            returnStdout: true
-        ).trim()
-    }
-
-
-    if (!versionDigest) {
-        error(
-            "Docker image digest alınamadı: " +
-            "${image}:v${version}"
-        )
-    }
-
-
-    /*
-     * Docker SHA image digest.
-     */
-    def shaDigest = withEnv([
-        "IMAGE=${image}",
-        "SHA=${sha}"
-    ]) {
-
-        sh(
-            script: '''
-                docker buildx imagetools inspect \
-                    "$IMAGE:sha-$SHA" \
-                    2>/dev/null |
-                grep -m 1 '^Digest:' |
-                awk '{print $2}' ||
-                true
-            ''',
-            returnStdout: true
-        ).trim()
-    }
-
-
-    if (!shaDigest) {
-        error(
-            "Version image var fakat SHA image yok: " +
-            "${image}:sha-${sha}"
-        )
-    }
-
-
-    /*
-     * Version ve SHA image aynı image'i gösteriyor mu?
-     */
-    if (versionDigest != shaDigest) {
-        error(
-            "Digest uyuşmazlığı: " +
-            "${image}:v${version}"
-        )
-    }
-
-
-    /*
-     * İkisi de mevcut ve aynı.
-     * GitHub tag da mevcutsa release zaten tamamlanmış.
-     */
-    if (remoteTagOutput) {
-        return 'SKIP'
-    }
-
-
-    /*
-     * Docker image var ama GitHub tag yok.
-     * Tutarsız durum.
-     */
-    error(
-        "Docker image var fakat GitHub tag yok: " +
-        githubTag
-    )
 }
