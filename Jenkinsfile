@@ -13,8 +13,8 @@ pipeline {
         FRONTEND_DIR = 'frontend'
 
         // Docker Hub'daki İKİ AYRI repository
-        DOCKERHUB_BACKEND_REPO = 'YOUR_DOCKERHUB_USER/todo-backend'
-        DOCKERHUB_FRONTEND_REPO = 'YOUR_DOCKERHUB_USER/todo-frontend'
+        DOCKERHUB_BACKEND_REPO = 'volkandemirors/todo-backend'
+        DOCKERHUB_FRONTEND_REPO = 'volkandemirors/todo-frontend'
     }
 
     stages {
