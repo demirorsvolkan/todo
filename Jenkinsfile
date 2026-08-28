@@ -458,7 +458,9 @@ pipeline {
                 '''
             }
         }
-        stage('12A - Docker Hub API Authentication Test') {
+     
+
+     stage('12A - Docker Hub API Authentication Test') {
     steps {
         echo '========== DOCKER HUB API AUTH TEST =========='
 
@@ -478,30 +480,55 @@ pipeline {
                 test -n "$DOCKER_USERNAME"
                 test -n "$DOCKER_PASSWORD"
 
-                RESPONSE=$(
+                # JSON body'yi güvenli şekilde oluştur.
+                jq -n \
+                    --arg identifier "$DOCKER_USERNAME" \
+                    --arg secret "$DOCKER_PASSWORD" \
+                    '{
+                        identifier: $identifier,
+                        secret: $secret
+                    }' \
+                    > /tmp/docker-auth-request.json
+
+                echo "Docker Hub auth request hazırlanıyor..."
+
+                HTTP_CODE=$(
                     curl \
                         -sS \
                         -X POST \
                         -H "Content-Type: application/json" \
-                        -d "{\"identifier\":\"${DOCKER_USERNAME}\",\"secret\":\"${DOCKER_PASSWORD}\"}" \
+                        -o /tmp/docker-auth-response.json \
+                        -w "%{http_code}" \
+                        --data-binary @/tmp/docker-auth-request.json \
                         "https://hub.docker.com/v2/auth/token"
                 )
 
-                echo "Docker Hub token response alındı."
+                echo "Docker Hub auth HTTP status: $HTTP_CODE"
 
-                DOCKER_API_TOKEN=$(
-                    printf '%s' "$RESPONSE" |
-                    sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p'
-                )
-
-                if [ -z "$DOCKER_API_TOKEN" ]; then
+                if [ "$HTTP_CODE" != "200" ]; then
+                    echo
                     echo "Docker Hub API authentication BAŞARISIZ."
-                    echo "$RESPONSE"
+
+                    cat /tmp/docker-auth-response.json
+
                     exit 1
                 fi
 
-                echo "Docker Hub API JWT alındı."
+                DOCKER_API_TOKEN=$(
+                    jq -r '.access_token // empty' \
+                    /tmp/docker-auth-response.json
+                )
 
+                if [ -z "$DOCKER_API_TOKEN" ]; then
+                    echo "Docker Hub API access_token döndürmedi."
+                    cat /tmp/docker-auth-response.json
+                    exit 1
+                fi
+
+                echo
+                echo "Docker Hub JWT başarıyla alındı."
+
+                # Token'ın gerçekten çalıştığını ayrıca test ediyoruz.
                 HTTP_CODE=$(
                     curl \
                         -sS \
@@ -511,19 +538,22 @@ pipeline {
                         "https://hub.docker.com/v2/user/"
                 )
 
-                echo "Docker Hub API HTTP status: $HTTP_CODE"
+                echo "Docker Hub authenticated API HTTP status: $HTTP_CODE"
 
                 if [ "$HTTP_CODE" != "200" ]; then
-                    echo "Docker Hub API authentication BAŞARISIZ."
+                    echo
+                    echo "Docker Hub JWT ile API erişimi BAŞARISIZ."
                     cat /tmp/docker-user-response.json
                     exit 1
                 fi
 
+                echo
                 echo "Docker Hub API authentication OK."
             '''
         }
     }
 }
+
 
 
 stage('12B - Docker Hub Test Tag Query') {
