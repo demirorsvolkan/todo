@@ -473,14 +473,41 @@ pipeline {
                 set -eu
                 set +x
 
-                echo "Docker Hub API authentication test..."
+                echo "Docker Hub API authentication..."
+
+                test -n "$DOCKER_USERNAME"
+                test -n "$DOCKER_PASSWORD"
+
+                RESPONSE=$(
+                    curl \
+                        -sS \
+                        -X POST \
+                        -H "Content-Type: application/json" \
+                        -d "{\"identifier\":\"${DOCKER_USERNAME}\",\"secret\":\"${DOCKER_PASSWORD}\"}" \
+                        "https://hub.docker.com/v2/auth/token"
+                )
+
+                echo "Docker Hub token response alındı."
+
+                DOCKER_API_TOKEN=$(
+                    printf '%s' "$RESPONSE" |
+                    sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p'
+                )
+
+                if [ -z "$DOCKER_API_TOKEN" ]; then
+                    echo "Docker Hub API authentication BAŞARISIZ."
+                    echo "$RESPONSE"
+                    exit 1
+                fi
+
+                echo "Docker Hub API JWT alındı."
 
                 HTTP_CODE=$(
                     curl \
                         -sS \
-                        -o /tmp/docker-auth-response.json \
+                        -o /tmp/docker-user-response.json \
                         -w "%{http_code}" \
-                        -u "${DOCKER_USERNAME}:${DOCKER_PASSWORD}" \
+                        -H "Authorization: Bearer $DOCKER_API_TOKEN" \
                         "https://hub.docker.com/v2/user/"
                 )
 
@@ -488,7 +515,7 @@ pipeline {
 
                 if [ "$HTTP_CODE" != "200" ]; then
                     echo "Docker Hub API authentication BAŞARISIZ."
-                    cat /tmp/docker-auth-response.json
+                    cat /tmp/docker-user-response.json
                     exit 1
                 fi
 
@@ -497,6 +524,7 @@ pipeline {
         }
     }
 }
+
 
 stage('12B - Docker Hub Test Tag Query') {
     steps {
