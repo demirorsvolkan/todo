@@ -497,6 +497,7 @@ pipeline {
         }
     }
 }
+
 stage('12B - Docker Hub Test Tag Query') {
     steps {
         echo '========== DOCKER HUB TEST TAG QUERY =========='
