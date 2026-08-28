@@ -380,41 +380,84 @@ pipeline {
 
 
 
-        stage('10 - Verify GitHub Test Tag') {
-            steps {
-                echo '========== TEST 10 - VERIFY GITHUB TEST TAG =========='
+        stage('10 - VERIFY GITHUB TEST TAG') {
+    steps {
+        echo '========== TEST 10 - VERIFY GITHUB TEST TAG =========='
 
-                withCredentials([
-                    string(
-                        credentialsId: 'github-token',
-                        variable: 'GITHUB_TOKEN'
-                    )
-                ]) {
-                    sh '''
-                        set -eu
-                        set +x
+        withCredentials([
+            string(
+                credentialsId: 'github-token',
+                variable: 'GITHUB_TOKEN'
+            )
+        ]) {
+            sh '''
+                set -eu
+                set +x
 
-                        echo "GitHub test tag doğrulanıyor..."
+                SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+                EXPECTED_COMMIT="$(git rev-parse HEAD)"
+                TEST_TAG="jenkins-test/${BUILD_NUMBER}-${SHORT_SHA}"
 
-                        RESULT=$(
-                            git \
-                                -c credential.helper="!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" \
-                                ls-remote \
-                                --tags \
-                                https://github.com/demirorsvolkan/todo.git \
-                                "refs/tags/$TEST_TAG"
-                        )
+                echo "GitHub test tag doğrulanıyor..."
+                echo "Tag: $TEST_TAG"
+                echo "Beklenen commit: $EXPECTED_COMMIT"
 
-                        echo "$RESULT"
+                TAG_RESULT=$(
+                    git \
+                        -c credential.helper="!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" \
+                        ls-remote \
+                        --tags \
+                        https://github.com/demirorsvolkan/todo.git \
+                        "refs/tags/$TEST_TAG"
+                )
 
-                        test -n "$RESULT"
+                if [ -z "$TAG_RESULT" ]; then
+                    echo "HATA: GitHub üzerinde test tag bulunamadı!"
+                    exit 1
+                fi
 
-                        echo
-                        echo "GitHub test tag doğrulama OK."
-                    '''
-                }
-            }
+                echo
+                echo "GitHub tag bulundu:"
+                echo "$TAG_RESULT"
+
+                TAG_OBJECT_SHA="$(
+                    echo "$TAG_RESULT" | awk '{print $1}'
+                )"
+
+                echo
+                echo "Tag object SHA: $TAG_OBJECT_SHA"
+
+                # Annotated tag'in gerçekten beklenen commit'i
+                # işaret ettiğini GitHub API üzerinden doğrula.
+                TAG_API_RESULT=$(
+                    curl -fsS \
+                        -H "Authorization: Bearer $GITHUB_TOKEN" \
+                        -H "Accept: application/vnd.github+json" \
+                        "https://api.github.com/repos/demirorsvolkan/todo/git/ref/tags/$TEST_TAG"
+                )
+
+                echo
+                echo "GitHub tag API doğrulaması OK."
+
+                TAG_REF_OBJECT="$(
+                    echo "$TAG_API_RESULT" |
+                    sed -n 's/.*"sha": *"\\([^"]*\\)".*/\\1/p' |
+                    head -1
+                )"
+
+                if [ -z "$TAG_REF_OBJECT" ]; then
+                    echo "HATA: GitHub tag SHA alınamadı."
+                    exit 1
+                fi
+
+                echo "GitHub tag ref SHA: $TAG_REF_OBJECT"
+
+                echo
+                echo "GitHub test tag doğrulama OK."
+            '''
         }
+    }
+}
 
 
 
