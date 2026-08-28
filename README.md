@@ -1,6 +1,6 @@
 # Todo App
 
-Todo uygulamasının uygulama kaynak kodlarını içerir.
+Todo uygulamasının uygulama kaynak kodlarını içerir;;
 
 ## İçerik
 
