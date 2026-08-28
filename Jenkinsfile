@@ -206,11 +206,12 @@ pipeline {
 
                     def versionType = 'patch'
 
-                    if (env.COMMIT_MESSAGE =~ /(?m)^feat!:/) {
+                    if (env.COMMIT_MESSAGE =~ '(?m)^feat!:') {
                         versionType = 'major'
-                    } else if (env.COMMIT_MESSAGE =~ /(?m)^feat:/) {
+                    } else if (env.COMMIT_MESSAGE =~ '(?m)^feat:') {
                         versionType = 'minor'
                     }
+
 
 
                     // ==========================
@@ -239,7 +240,8 @@ pipeline {
 
                             def matcher =
                                 env.BACKEND_BASE_TAG =~
-                                /^backend\/v([0-9]+)\.([0-9]+)\.([0-9]+)-sha\.[0-9a-fA-F]+$/
+                                '^backend/v([0-9]+)\\.([0-9]+)\\.([0-9]+)-sha\\.[0-9a-fA-F]+$'
+
 
                             if (!matcher.matches()) {
                                 error(
@@ -303,7 +305,8 @@ pipeline {
 
                             def matcher =
                                 env.FRONTEND_BASE_TAG =~
-                                /^frontend\/v([0-9]+)\.([0-9]+)\.([0-9]+)-sha\.[0-9a-fA-F]+$/
+                                '^frontend/v([0-9]+)\\.([0-9]+)\\.([0-9]+)-sha\\.[0-9a-fA-F]+$'
+
 
                             if (!matcher.matches()) {
                                 error(
