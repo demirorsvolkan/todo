@@ -677,8 +677,46 @@ stage('12D - Docker Hub Test Tag DELETE') {
                 set -eu
                 set +x
 
+                echo "========================================"
+                echo "DOCKER HUB TEST TAG DELETE"
+                echo "========================================"
+
+                #
+                # Önce Docker Hub API authentication
+                # Docker Hub PAT -> JWT
+                #
+                AUTH_RESPONSE=$(
+                    curl -sS \
+                        -X POST \
+                        -H "Content-Type: application/json" \
+                        -d "{\\"identifier\\":\\"${DOCKER_USERNAME}\\",\\"secret\\":\\"${DOCKER_PASSWORD}\\"}" \
+                        https://hub.docker.com/v2/auth/token
+                )
+
+                DOCKER_TOKEN=$(
+                    printf '%s' "$AUTH_RESPONSE" |
+                    sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p'
+                )
+
+                if [ -z "$DOCKER_TOKEN" ]; then
+                    echo "HATA: Docker Hub API JWT alınamadı."
+                    echo "$AUTH_RESPONSE"
+                    exit 1
+                fi
+
+                echo "Docker Hub API JWT alındı."
+
+                #
+                # Backend
+                #
+                echo
+                echo "----------------------------------------"
                 echo "Backend test tag siliniyor..."
-                echo "Tag: $TEST_BACKEND_TAG"
+                echo "Repository: $BACKEND_IMAGE"
+                echo "Tag       : $TEST_BACKEND_TAG"
+                echo "----------------------------------------"
+
+                BACKEND_DELETE_URL="https://hub.docker.com/v2/namespaces/${DOCKER_USERNAME}/repositories/todo-backend/tags/${TEST_BACKEND_TAG}"
 
                 HTTP_CODE=$(
                     curl \
@@ -686,11 +724,11 @@ stage('12D - Docker Hub Test Tag DELETE') {
                         -o /tmp/backend-delete.json \
                         -w "%{http_code}" \
                         -X DELETE \
-                        -u "${DOCKER_USERNAME}:${DOCKER_PASSWORD}" \
-                        "https://hub.docker.com/v2/repositories/${BACKEND_IMAGE}/tags/${TEST_BACKEND_TAG}/"
+                        -H "Authorization: Bearer $DOCKER_TOKEN" \
+                        -H "Accept: application/json" \
+                        "$BACKEND_DELETE_URL"
                 )
 
-                echo
                 echo "Backend DELETE HTTP status: $HTTP_CODE"
 
                 if [ -s /tmp/backend-delete.json ]; then
@@ -699,17 +737,23 @@ stage('12D - Docker Hub Test Tag DELETE') {
 
                 if [ "$HTTP_CODE" != "204" ]; then
                     echo
-                    echo "HATA: Backend test tag SİLİNEMEDİ."
+                    echo "HATA: Backend test tag silinemedi."
                     exit 1
                 fi
 
-                echo
                 echo "Backend test tag SILINDI."
 
-
+                #
+                # Frontend
+                #
                 echo
+                echo "----------------------------------------"
                 echo "Frontend test tag siliniyor..."
-                echo "Tag: $TEST_FRONTEND_TAG"
+                echo "Repository: $FRONTEND_IMAGE"
+                echo "Tag       : $TEST_FRONTEND_TAG"
+                echo "----------------------------------------"
+
+                FRONTEND_DELETE_URL="https://hub.docker.com/v2/namespaces/${DOCKER_USERNAME}/repositories/todo-frontend/tags/${TEST_FRONTEND_TAG}"
 
                 HTTP_CODE=$(
                     curl \
@@ -717,11 +761,11 @@ stage('12D - Docker Hub Test Tag DELETE') {
                         -o /tmp/frontend-delete.json \
                         -w "%{http_code}" \
                         -X DELETE \
-                        -u "${DOCKER_USERNAME}:${DOCKER_PASSWORD}" \
-                        "https://hub.docker.com/v2/repositories/${FRONTEND_IMAGE}/tags/${TEST_FRONTEND_TAG}/"
+                        -H "Authorization: Bearer $DOCKER_TOKEN" \
+                        -H "Accept: application/json" \
+                        "$FRONTEND_DELETE_URL"
                 )
 
-                echo
                 echo "Frontend DELETE HTTP status: $HTTP_CODE"
 
                 if [ -s /tmp/frontend-delete.json ]; then
@@ -730,11 +774,10 @@ stage('12D - Docker Hub Test Tag DELETE') {
 
                 if [ "$HTTP_CODE" != "204" ]; then
                     echo
-                    echo "HATA: Frontend test tag SİLİNEMEDİ."
+                    echo "HATA: Frontend test tag silinemedi."
                     exit 1
                 fi
 
-                echo
                 echo "Frontend test tag SILINDI."
 
                 echo
@@ -745,6 +788,7 @@ stage('12D - Docker Hub Test Tag DELETE') {
         }
     }
 }
+
 
 
 
