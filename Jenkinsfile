@@ -74,96 +74,133 @@ pipeline {
             steps {
                 script {
                     env.BACKEND_BASE_TAG = findLatestValidTag('backend', env.TRIGGER_SHA)
-                    env.BACKEND_BASE_COMMIT = getTagCommit(env.BACKEND_BASE_TAG)
-                    env.BACKEND_CHANGED = gitDiffExists(
-                        env.BACKEND_BASE_COMMIT,
-                        env.TRIGGER_SHA,
-                        'backend/'
-                    ) ? 'true' : 'false'
-
                     env.FRONTEND_BASE_TAG = findLatestValidTag('frontend', env.TRIGGER_SHA)
-                    env.FRONTEND_BASE_COMMIT = getTagCommit(env.FRONTEND_BASE_TAG)
-                    env.FRONTEND_CHANGED = gitDiffExists(
-                        env.FRONTEND_BASE_COMMIT,
-                        env.TRIGGER_SHA,
-                        'frontend/'
-                    ) ? 'true' : 'false'
+
+                    def backendFirstRelease = env.BACKEND_BASE_TAG == 'backend/v0.0.0-sha.0000000'
+                    def frontendFirstRelease = env.FRONTEND_BASE_TAG == 'frontend/v0.0.0-sha.0000000'
+
+                    if (backendFirstRelease) {
+                        env.BACKEND_CHANGED = 'true'
+                    } else {
+                        env.BACKEND_BASE_COMMIT = getTagCommit(env.BACKEND_BASE_TAG)
+                        env.BACKEND_CHANGED = gitDiffExists(
+                            env.BACKEND_BASE_COMMIT,
+                            env.TRIGGER_SHA,
+                            'backend/'
+                        ) ? 'true' : 'false'
+                    }
+
+                    if (frontendFirstRelease) {
+                        env.FRONTEND_CHANGED = 'true'
+                    } else {
+                        env.FRONTEND_BASE_COMMIT = getTagCommit(env.FRONTEND_BASE_TAG)
+                        env.FRONTEND_CHANGED = gitDiffExists(
+                            env.FRONTEND_BASE_COMMIT,
+                            env.TRIGGER_SHA,
+                            'frontend/'
+                        ) ? 'true' : 'false'
+                    }
 
                     echo "Backend base    : ${env.BACKEND_BASE_TAG}"
                     echo "Backend changed : ${env.BACKEND_CHANGED}"
                     echo "Frontend base   : ${env.FRONTEND_BASE_TAG}"
                     echo "Frontend changed: ${env.FRONTEND_CHANGED}"
-
-                    if (
-                        env.BACKEND_CHANGED == 'false' &&
-                        env.FRONTEND_CHANGED == 'false'
-                    ) {
-                        currentBuild.result = 'NOT_BUILT'
-                        error('Backend veya frontend değişmedi.')
-                    }
                 }
             }
         }
+
 
         stage('Calculate Versions') {
             steps {
                 script {
                     def versionType = 'patch'
 
-                    if (env.COMMIT_MESSAGE.startsWith('feat!:')) {
+                    if (env.COMMIT_MESSAGE =~ /(?m)^feat!:/) {
                         versionType = 'major'
-                    } else if (env.COMMIT_MESSAGE.startsWith('feat:')) {
+                    } else if (env.COMMIT_MESSAGE =~ /(?m)^feat:/) {
                         versionType = 'minor'
                     }
 
                     if (env.BACKEND_CHANGED == 'true') {
-                        def parts = parseTag(env.BACKEND_BASE_TAG, 'backend')
-                        def major = parts[0]
-                        def minor = parts[1]
-                        def patch = parts[2]
-
-                        if (versionType == 'major') {
-                            major++
-                            minor = 0
-                            patch = 0
-                        } else if (versionType == 'minor') {
-                            minor++
-                            patch = 0
+                        if (env.BACKEND_BASE_TAG == 'backend/v0.0.0-sha.0000000') {
+                            if (versionType == 'major') {
+                                env.BACKEND_VERSION = '1.0.0'
+                            } else if (versionType == 'minor') {
+                                env.BACKEND_VERSION = '0.1.0'
+                            } else {
+                                env.BACKEND_VERSION = '0.0.1'
+                            }
                         } else {
-                            patch++
+                            def matcher = env.BACKEND_BASE_TAG =~ /^backend\/v([0-9]+)\.([0-9]+)\.([0-9]+)-sha\.[0-9a-fA-F]+$/
+
+                            if (!matcher.matches()) {
+                                error("Geçersiz backend base tag: ${env.BACKEND_BASE_TAG}")
+                            }
+
+                            int major = matcher[0][1] as int
+                            int minor = matcher[0][2] as int
+                            int patch = matcher[0][3] as int
+
+                            if (versionType == 'major') {
+                                major++
+                                minor = 0
+                                patch = 0
+                            } else if (versionType == 'minor') {
+                                minor++
+                                patch = 0
+                            } else {
+                                patch++
+                            }
+
+                            env.BACKEND_VERSION = "${major}.${minor}.${patch}"
                         }
 
-                        env.BACKEND_VERSION = "${major}.${minor}.${patch}"
                         env.BACKEND_TAG = "backend/v${env.BACKEND_VERSION}-sha.${env.SHORT_SHA}"
                     }
 
                     if (env.FRONTEND_CHANGED == 'true') {
-                        def parts = parseTag(env.FRONTEND_BASE_TAG, 'frontend')
-                        def major = parts[0]
-                        def minor = parts[1]
-                        def patch = parts[2]
-
-                        if (versionType == 'major') {
-                            major++
-                            minor = 0
-                            patch = 0
-                        } else if (versionType == 'minor') {
-                            minor++
-                            patch = 0
+                        if (env.FRONTEND_BASE_TAG == 'frontend/v0.0.0-sha.0000000') {
+                            if (versionType == 'major') {
+                                env.FRONTEND_VERSION = '1.0.0'
+                            } else if (versionType == 'minor') {
+                                env.FRONTEND_VERSION = '0.1.0'
+                            } else {
+                                env.FRONTEND_VERSION = '0.0.1'
+                            }
                         } else {
-                            patch++
+                            def matcher = env.FRONTEND_BASE_TAG =~ /^frontend\/v([0-9]+)\.([0-9]+)\.([0-9]+)-sha\.[0-9a-fA-F]+$/
+
+                            if (!matcher.matches()) {
+                                error("Geçersiz frontend base tag: ${env.FRONTEND_BASE_TAG}")
+                            }
+
+                            int major = matcher[0][1] as int
+                            int minor = matcher[0][2] as int
+                            int patch = matcher[0][3] as int
+
+                            if (versionType == 'major') {
+                                major++
+                                minor = 0
+                                patch = 0
+                            } else if (versionType == 'minor') {
+                                minor++
+                                patch = 0
+                            } else {
+                                patch++
+                            }
+
+                            env.FRONTEND_VERSION = "${major}.${minor}.${patch}"
                         }
 
-                        env.FRONTEND_VERSION = "${major}.${minor}.${patch}"
                         env.FRONTEND_TAG = "frontend/v${env.FRONTEND_VERSION}-sha.${env.SHORT_SHA}"
                     }
 
-                    echo "Version type: ${versionType}"
-                    echo "Backend: ${env.BACKEND_VERSION ?: 'unchanged'}"
-                    echo "Frontend: ${env.FRONTEND_VERSION ?: 'unchanged'}"
+                    echo "Backend version  : ${env.BACKEND_VERSION ?: '-'}"
+                    echo "Frontend version : ${env.FRONTEND_VERSION ?: '-'}"
                 }
             }
         }
+
 
         stage('Docker Hub Check') {
             steps {
