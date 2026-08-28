@@ -774,7 +774,7 @@ stage('12D - Docker Hub Test Tag DELETE') {
 
                 if [ "$HTTP_CODE" != "204" ]; then
                     echo
-                    echo "HATA: Frontend test tag silinemedi."
+                    echo "HATA: Frontend test tag silinemedi.."
                     exit 1
                 fi
 
