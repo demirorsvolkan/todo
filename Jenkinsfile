@@ -682,7 +682,7 @@ stage('12C - Docker Hub Frontend Test Tag Query') {
                         "$FRONTEND_IMAGE:latest"
 
                     echo
-                    echo "Docker existing tags query OK."
+                    echo "Docker existing tags query OK.."
                 '''
             }
         }
