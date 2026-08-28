@@ -149,34 +149,38 @@ pipeline {
 
 
 
-        stage('04 - GitHub Branch Query') {
-            steps {
-                echo '========== TEST 04 - GITHUB BRANCH QUERY =========='
+     stage('04 - GitHub Branch Query') {
+        steps {
+            echo '========== TEST 04 - GITHUB BRANCH QUERY =========='
 
-                withCredentials([
-                    string(
-                        credentialsId: 'github-token',
-                        variable: 'GITHUB_TOKEN'
-                    )
-                ]) {
-                    sh '''
-                        set -eu
-                        set +x
+            withCredentials([
+                string(
+                    credentialsId: 'github-token',
+                    variable: 'GITHUB_TOKEN'
+                )
+            ]) {
+                sh '''
+                    set -eu
+                    set +x
 
-                        echo "main branch sorgulanıyor..."
+                    echo "main branch sorgulanıyor..."
+                    echo "Git HTTP authentication test..."
 
-                        git \
-                            -c http.extraheader="AUTHORIZATION: Bearer $GITHUB_TOKEN" \
-                            ls-remote \
-                            origin \
-                            refs/heads/main
+                    GIT_TERMINAL_PROMPT=0 \
+                    git \
+                        -c http.extraheader="Authorization: Bearer ${GITHUB_TOKEN}" \
+                        ls-remote \
+                        --heads \
+                        https://github.com/demirorsvolkan/todo.git \
+                        refs/heads/main
 
-                        echo
-                        echo "main branch sorgusu OK."
-                    '''
-                }
+                    echo
+                    echo "main branch sorgusu OK."
+                '''
             }
         }
+    }
+
 
 
 
