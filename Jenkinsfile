@@ -166,18 +166,18 @@ pipeline {
                         echo "main branch sorgulanıyor..."
 
                         git \
-                            -c http.extraheader="Authorization: Bearer ${GITHUB_TOKEN}" \
+                            -c http.extraheader="AUTHORIZATION: Bearer $GITHUB_TOKEN" \
                             ls-remote \
-                            --heads \
                             origin \
                             refs/heads/main
 
                         echo
-                        echo "Branch sorgusu OK."
+                        echo "main branch sorgusu OK."
                     '''
                 }
             }
         }
+
 
 
         stage('05 - Existing Git Tags Query') {
@@ -201,15 +201,15 @@ pipeline {
                             ls-remote \
                             --tags \
                             origin \
-                            > /tmp/remote-tags.txt
+                            > remote-tags.txt
 
                         echo
-                        echo "Remote tag sayısı:"
-                        wc -l /tmp/remote-tags.txt
+                        echo "Remote tag satır sayısı:"
+                        wc -l remote-tags.txt
 
                         echo
                         echo "İlk 20 tag:"
-                        head -20 /tmp/remote-tags.txt || true
+                        head -20 remote-tags.txt || true
 
                         echo
                         echo "Tag sorgusu OK."
@@ -217,6 +217,7 @@ pipeline {
                 }
             }
         }
+
 
 
         stage('06 - Prepare Test Variables') {
