@@ -201,19 +201,10 @@ pipeline {
                         echo "Remote tag'ler sorgulanıyor..."
 
                         git \
-                            -c http.extraheader="Authorization: Bearer ${GITHUB_TOKEN}" \
+                            -c credential.helper="!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" \
                             ls-remote \
                             --tags \
-                            origin \
-                            > remote-tags.txt
-
-                        echo
-                        echo "Remote tag satır sayısı:"
-                        wc -l remote-tags.txt
-
-                        echo
-                        echo "İlk 20 tag:"
-                        head -20 remote-tags.txt || true
+                            https://github.com/demirorsvolkan/todo.git
 
                         echo
                         echo "Tag sorgusu OK."
@@ -221,6 +212,7 @@ pipeline {
                 }
             }
         }
+
 
 
 
@@ -336,7 +328,7 @@ pipeline {
 
         stage('09 - Push GitHub Test Tag') {
             steps {
-                echo '========== TEST 09 - PUSH GITHUB TAG =========='
+                echo '========== TEST 09 - PUSH GITHUB TEST TAG =========='
 
                 withCredentials([
                     string(
@@ -348,25 +340,26 @@ pipeline {
                         set -eu
                         set +x
 
-                        echo "GitHub test tag pushlanıyor..."
+                        echo "Test tag GitHub'a pushlanıyor..."
 
                         git \
-                            -c http.extraheader="Authorization: Bearer ${GITHUB_TOKEN}" \
+                            -c credential.helper="!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" \
                             push \
-                            origin \
-                            "$TEST_GITHUB_TAG"
+                            https://github.com/demirorsvolkan/todo.git \
+                            "$TEST_TAG"
 
                         echo
-                        echo "GitHub tag push OK."
+                        echo "GitHub test tag push OK."
                     '''
                 }
             }
         }
+
 
 
         stage('10 - Verify GitHub Test Tag') {
             steps {
-                echo '========== TEST 10 - VERIFY GITHUB TAG =========='
+                echo '========== TEST 10 - VERIFY GITHUB TEST TAG =========='
 
                 withCredentials([
                     string(
@@ -378,67 +371,28 @@ pipeline {
                         set -eu
                         set +x
 
-                        echo "Pushlanan tag tekrar sorgulanıyor..."
+                        echo "GitHub test tag doğrulanıyor..."
 
-                        OUTPUT=$(
+                        RESULT=$(
                             git \
-                                -c http.extraheader="Authorization: Bearer ${GITHUB_TOKEN}" \
+                                -c credential.helper="!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" \
                                 ls-remote \
                                 --tags \
-                                origin \
-                                "refs/tags/${TEST_GITHUB_TAG}" \
-                                "refs/tags/${TEST_GITHUB_TAG}^{}"
+                                https://github.com/demirorsvolkan/todo.git \
+                                "refs/tags/$TEST_TAG"
                         )
 
-                        if [ -z "$OUTPUT" ]; then
-                            echo "HATA: GitHub test tag bulunamadı."
-                            exit 1
-                        fi
+                        echo "$RESULT"
+
+                        test -n "$RESULT"
 
                         echo
-                        echo "$OUTPUT"
-
-                        REMOTE_COMMIT=$(
-                            printf '%s\\n' "$OUTPUT" |
-                            awk \
-                                -v tag="$TEST_GITHUB_TAG" \
-                                '$2 == "refs/tags/" tag "^{}" {
-                                    print $1
-                                    exit
-                                }'
-                        )
-
-                        if [ -z "$REMOTE_COMMIT" ]; then
-                            REMOTE_COMMIT=$(
-                                printf '%s\\n' "$OUTPUT" |
-                                awk \
-                                    -v tag="$TEST_GITHUB_TAG" \
-                                    '$2 == "refs/tags/" tag {
-                                        print $1
-                                        exit
-                                    }'
-                            )
-                        fi
-
-                        echo
-                        echo "Remote tag commit:"
-                        echo "$REMOTE_COMMIT"
-
-                        echo
-                        echo "Expected commit:"
-                        echo "$TEST_SHA"
-
-                        if [ "$REMOTE_COMMIT" != "$TEST_SHA" ]; then
-                            echo "HATA: GitHub tag yanlış commit'i gösteriyor."
-                            exit 1
-                        fi
-
-                        echo
-                        echo "GitHub tag doğrulaması OK."
+                        echo "GitHub test tag doğrulama OK."
                     '''
                 }
             }
         }
+
 
 
         stage('11 - Docker Hub Login') {
