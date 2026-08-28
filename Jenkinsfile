@@ -270,24 +270,34 @@ pipeline {
                         set -eu
                         set +x
 
-                        TEST_TAG="jenkins-test/${BUILD_NUMBER}-${GIT_COMMIT[0..6]}"
+                        SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+                        TEST_TAG="jenkins-test/${BUILD_NUMBER}-${SHORT_SHA}"
 
                         echo "Test tag kontrol ediliyor:"
                         echo "$TEST_TAG"
 
-                        git \
-                            -c credential.helper="!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" \
-                            ls-remote \
-                            --tags \
-                            https://github.com/demirorsvolkan/todo.git \
-                            "refs/tags/$TEST_TAG"
+                        RESULT=$(
+                            git \
+                                -c credential.helper="!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" \
+                                ls-remote \
+                                --tags \
+                                https://github.com/demirorsvolkan/todo.git \
+                                "refs/tags/$TEST_TAG"
+                        )
 
-                        echo
-                        echo "Tag sorgusu tamamlandı."
+                        if [ -n "$RESULT" ]; then
+                            echo "SONUÇ: Test tag ZATEN VAR."
+                            echo "$RESULT"
+                            exit 1
+                        fi
+
+                        echo "SONUÇ: Test tag YOK."
+                        echo "Tag oluşturma testine devam ediliyor."
                     '''
                 }
             }
         }
+
 
 
 
