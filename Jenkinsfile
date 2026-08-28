@@ -293,18 +293,18 @@ stage('11 - Calculate Next Versions') {
 
             if (env.BACKEND_CHANGED == 'true') {
 
-                if (env.BACKEND_TAG) {
+                if (env.BACKEND_TAG?.trim()) {
 
-                    def match = (
-                        env.BACKEND_TAG =~
-                        /^backend\/v(\d+)\.(\d+)\.(\d+)-sha\.[0-9a-fA-F]+$/
-                    )
+                    def backendRegex =
+                        '^backend/v([0-9]+)\\.([0-9]+)\\.([0-9]+)-sha\\.([0-9a-fA-F]+)$'
 
-                    if (!match.matches()) {
+                    if (!env.BACKEND_TAG.matches(backendRegex)) {
                         error(
                             "Geçersiz backend tag formatı: ${env.BACKEND_TAG}"
                         )
                     }
+
+                    def match = env.BACKEND_TAG =~ backendRegex
 
                     int major = match[0][1] as int
                     int minor = match[0][2] as int
@@ -330,20 +330,21 @@ stage('11 - Calculate Next Versions') {
                     "sha-${env.CURRENT_SHORT_SHA}"
             }
 
+
             if (env.FRONTEND_CHANGED == 'true') {
 
-                if (env.FRONTEND_TAG) {
+                if (env.FRONTEND_TAG?.trim()) {
 
-                    def match = (
-                        env.FRONTEND_TAG =~
-                        /^frontend\/v(\d+)\.(\d+)\.(\d+)-sha\.[0-9a-fA-F]+$/
-                    )
+                    def frontendRegex =
+                        '^frontend/v([0-9]+)\\.([0-9]+)\\.([0-9]+)-sha\\.([0-9a-fA-F]+)$'
 
-                    if (!match.matches()) {
+                    if (!env.FRONTEND_TAG.matches(frontendRegex)) {
                         error(
                             "Geçersiz frontend tag formatı: ${env.FRONTEND_TAG}"
                         )
                     }
+
+                    def match = env.FRONTEND_TAG =~ frontendRegex
 
                     int major = match[0][1] as int
                     int minor = match[0][2] as int
@@ -369,6 +370,7 @@ stage('11 - Calculate Next Versions') {
                     "sha-${env.CURRENT_SHORT_SHA}"
             }
 
+
             echo """
 ========== NEXT VERSIONS ==========
 
@@ -385,6 +387,7 @@ Frontend:
         }
     }
 }
+
 
         stage('12 - Docker Image Build') {
             steps {
