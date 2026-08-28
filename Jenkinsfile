@@ -340,34 +340,43 @@ pipeline {
 
 
 
-        stage('09 - Push GitHub Test Tag') {
-            steps {
-                echo '========== TEST 09 - PUSH GITHUB TEST TAG =========='
+  stage('09 - PUSH GITHUB TEST TAG') {
+    steps {
+        echo '========== TEST 09 - PUSH GITHUB TEST TAG =========='
 
-                withCredentials([
-                    string(
-                        credentialsId: 'github-token',
-                        variable: 'GITHUB_TOKEN'
-                    )
-                ]) {
-                    sh '''
-                        set -eu
-                        set +x
+        withCredentials([
+            string(
+                credentialsId: 'github-token',
+                variable: 'GITHUB_TOKEN'
+            )
+        ]) {
+            sh '''
+                set -eu
+                set +x
 
-                        echo "Test tag GitHub'a pushlanıyor..."
+                SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+                TEST_TAG="jenkins-test/${BUILD_NUMBER}-${SHORT_SHA}"
 
-                        git \
-                            -c credential.helper="!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" \
-                            push \
-                            https://github.com/demirorsvolkan/todo.git \
-                            "$TEST_TAG"
+                echo "Test tag GitHub'a pushlanıyor..."
+                echo "Tag: $TEST_TAG"
 
-                        echo
-                        echo "GitHub test tag push OK."
-                    '''
-                }
-            }
+                # Önce local tag gerçekten var mı?
+                git show-ref --verify --quiet "refs/tags/$TEST_TAG"
+
+                # GitHub HTTPS authentication
+                git \
+                    -c credential.helper="!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" \
+                    push \
+                    https://github.com/demirorsvolkan/todo.git \
+                    "refs/tags/$TEST_TAG"
+
+                echo
+                echo "GitHub tag push OK."
+            '''
         }
+    }
+}
+
 
 
 
