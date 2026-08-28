@@ -287,90 +287,89 @@ Docker image oluşturulmayacak.
 '''
             }
         }
+stage('11 - Calculate Next Versions') {
+    steps {
+        script {
 
-        stage('11 - Calculate Next Versions') {
-            steps {
-                script {
+            if (env.BACKEND_CHANGED == 'true') {
 
-                    if (env.BACKEND_CHANGED == 'true') {
+                if (env.BACKEND_TAG) {
 
-                        if (env.BACKEND_TAG) {
+                    def match = (
+                        env.BACKEND_TAG =~
+                        /^backend\/v(\d+)\.(\d+)\.(\d+)-sha\.[0-9a-fA-F]+$/
+                    )
 
-                            def match = (
-                                env.BACKEND_TAG =~
-                                /^backend\\/v(\\d+)\\.(\\d+)\\.(\\d+)-sha\\.[0-9a-fA-F]+$/
-                            )
-
-                            if (!match.matches()) {
-                                error(
-                                    "Geçersiz backend tag formatı: ${env.BACKEND_TAG}"
-                                )
-                            }
-
-                            int major = match[0][1] as int
-                            int minor = match[0][2] as int
-                            int patch = match[0][3] as int
-
-                            patch++
-
-                            env.BACKEND_VERSION =
-                                "v${major}.${minor}.${patch}"
-
-                        } else {
-
-                            env.BACKEND_VERSION = 'v1.0.0'
-                        }
-
-                        env.BACKEND_FULL_TAG =
-                            "backend/${env.BACKEND_VERSION}-sha.${env.CURRENT_SHORT_SHA}"
-
-                        env.BACKEND_DOCKER_VERSION_TAG =
-                            env.BACKEND_VERSION
-
-                        env.BACKEND_DOCKER_SHA_TAG =
-                            "sha-${env.CURRENT_SHORT_SHA}"
+                    if (!match.matches()) {
+                        error(
+                            "Geçersiz backend tag formatı: ${env.BACKEND_TAG}"
+                        )
                     }
 
-                    if (env.FRONTEND_CHANGED == 'true') {
+                    int major = match[0][1] as int
+                    int minor = match[0][2] as int
+                    int patch = match[0][3] as int
 
-                        if (env.FRONTEND_TAG) {
+                    patch++
 
-                            def match = (
-                                env.FRONTEND_TAG =~
-                                /^frontend\\/v(\\d+)\\.(\\d+)\\.(\\d+)-sha\\.[0-9a-fA-F]+$/
-                            )
+                    env.BACKEND_VERSION =
+                        "v${major}.${minor}.${patch}"
 
-                            if (!match.matches()) {
-                                error(
-                                    "Geçersiz frontend tag formatı: ${env.FRONTEND_TAG}"
-                                )
-                            }
+                } else {
 
-                            int major = match[0][1] as int
-                            int minor = match[0][2] as int
-                            int patch = match[0][3] as int
+                    env.BACKEND_VERSION = 'v1.0.0'
+                }
 
-                            patch++
+                env.BACKEND_FULL_TAG =
+                    "backend/${env.BACKEND_VERSION}-sha.${env.CURRENT_SHORT_SHA}"
 
-                            env.FRONTEND_VERSION =
-                                "v${major}.${minor}.${patch}"
+                env.BACKEND_DOCKER_VERSION_TAG =
+                    env.BACKEND_VERSION
 
-                        } else {
+                env.BACKEND_DOCKER_SHA_TAG =
+                    "sha-${env.CURRENT_SHORT_SHA}"
+            }
 
-                            env.FRONTEND_VERSION = 'v1.0.0'
-                        }
+            if (env.FRONTEND_CHANGED == 'true') {
 
-                        env.FRONTEND_FULL_TAG =
-                            "frontend/${env.FRONTEND_VERSION}-sha.${env.CURRENT_SHORT_SHA}"
+                if (env.FRONTEND_TAG) {
 
-                        env.FRONTEND_DOCKER_VERSION_TAG =
-                            env.FRONTEND_VERSION
+                    def match = (
+                        env.FRONTEND_TAG =~
+                        /^frontend\/v(\d+)\.(\d+)\.(\d+)-sha\.[0-9a-fA-F]+$/
+                    )
 
-                        env.FRONTEND_DOCKER_SHA_TAG =
-                            "sha-${env.CURRENT_SHORT_SHA}"
+                    if (!match.matches()) {
+                        error(
+                            "Geçersiz frontend tag formatı: ${env.FRONTEND_TAG}"
+                        )
                     }
 
-                    echo """
+                    int major = match[0][1] as int
+                    int minor = match[0][2] as int
+                    int patch = match[0][3] as int
+
+                    patch++
+
+                    env.FRONTEND_VERSION =
+                        "v${major}.${minor}.${patch}"
+
+                } else {
+
+                    env.FRONTEND_VERSION = 'v1.0.0'
+                }
+
+                env.FRONTEND_FULL_TAG =
+                    "frontend/${env.FRONTEND_VERSION}-sha.${env.CURRENT_SHORT_SHA}"
+
+                env.FRONTEND_DOCKER_VERSION_TAG =
+                    env.FRONTEND_VERSION
+
+                env.FRONTEND_DOCKER_SHA_TAG =
+                    "sha-${env.CURRENT_SHORT_SHA}"
+            }
+
+            echo """
 ========== NEXT VERSIONS ==========
 
 Backend:
@@ -383,9 +382,9 @@ Frontend:
 
 ====================================
 """
-                }
-            }
         }
+    }
+}
 
         stage('12 - Docker Image Build') {
             steps {
