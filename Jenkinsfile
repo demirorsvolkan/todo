@@ -18,7 +18,7 @@ pipeline {
 
         stage('01 - Checkout') {
             steps {
-                echo '========== TEST 01 - CHECKOUT =========='
+                echo '========== 01 - CHECKOUT =========='
 
                 checkout scm
 
@@ -33,29 +33,24 @@ pipeline {
                     git remote -v
 
                     echo
-                    echo "Current commit:"
+                    echo "Commit:"
                     git rev-parse HEAD
-
-                    echo
-                    echo "Current branch/ref:"
-                    git branch -a --show-current || true
 
                     echo
                     echo "Commit message:"
                     git log -1 --pretty=%B
-                '''
-
-                sh '''
-                    set -eu
 
                     if [ -f .git/shallow ]; then
-                        echo "Repository shallow. Unshallow yapılıyor..."
+                        echo
+                        echo "Shallow repository detected."
                         git fetch --unshallow origin
                     fi
 
+                    echo
                     echo "Fetching branches..."
                     git fetch --force origin
 
+                    echo
                     echo "Fetching tags..."
                     git fetch --tags --force origin
                 '''
@@ -63,9 +58,9 @@ pipeline {
         }
 
 
-        stage('02 - GitHub Token Authentication') {
+        stage('02 - GitHub Authentication') {
             steps {
-                echo '========== TEST 02 - GITHUB AUTHENTICATION =========='
+                echo '========== 02 - GITHUB AUTHENTICATION =========='
 
                 withCredentials([
                     string(
@@ -77,15 +72,9 @@ pipeline {
                         set -eu
                         set +x
 
-                        echo "GitHub token Jenkins credential'dan alındı."
-
                         test -n "$GITHUB_TOKEN"
 
-                        echo "Token uzunluğu:"
-                        printf '%s' "$GITHUB_TOKEN" | wc -c
-
-                        echo
-                        echo "GitHub API authentication test ediliyor..."
+                        echo "GitHub API authentication test..."
 
                         HTTP_CODE=$(
                             curl \
@@ -97,15 +86,15 @@ pipeline {
                                 https://api.github.com/user
                         )
 
-                        echo "GitHub API HTTP status: $HTTP_CODE"
+                        echo "HTTP status: $HTTP_CODE"
 
                         if [ "$HTTP_CODE" != "200" ]; then
-                            echo "GitHub token authentication BAŞARISIZ."
+                            echo "GitHub authentication FAILED."
                             cat /tmp/github-user.json || true
                             exit 1
                         fi
 
-                        echo "GitHub token authentication OK."
+                        echo "GitHub authentication OK."
                     '''
                 }
             }
@@ -114,7 +103,7 @@ pipeline {
 
         stage('03 - GitHub Repository Access') {
             steps {
-                echo '========== TEST 03 - GITHUB REPOSITORY ACCESS =========='
+                echo '========== 03 - GITHUB REPOSITORY ACCESS =========='
 
                 withCredentials([
                     string(
@@ -126,32 +115,33 @@ pipeline {
                         set -eu
                         set +x
 
-                        HTTP_STATUS=$(curl -sS \
-                            -o /tmp/github_repo.json \
-                            -w "%{http_code}" \
-                            -H "Authorization: Bearer $GITHUB_TOKEN" \
-                            -H "Accept: application/vnd.github+json" \
-                            https://api.github.com/repos/demirorsvolkan/todo)
+                        HTTP_STATUS=$(
+                            curl \
+                                -sS \
+                                -o /tmp/github_repo.json \
+                                -w "%{http_code}" \
+                                -H "Authorization: Bearer $GITHUB_TOKEN" \
+                                -H "Accept: application/vnd.github+json" \
+                                https://api.github.com/repos/demirorsvolkan/todo
+                        )
 
-                        echo "GitHub repository API HTTP status: $HTTP_STATUS"
+                        echo "GitHub repository HTTP status: $HTTP_STATUS"
 
                         if [ "$HTTP_STATUS" != "200" ]; then
-                            echo "GitHub repository erişimi başarısız."
                             cat /tmp/github_repo.json
                             exit 1
                         fi
 
-                        echo "GitHub repository erişimi OK."
+                        echo "GitHub repository access OK."
                     '''
                 }
             }
         }
 
 
-
         stage('04 - GitHub Branch Query') {
             steps {
-                echo '========== TEST 04 - GITHUB BRANCH QUERY =========='
+                echo '========== 04 - GITHUB BRANCH QUERY =========='
 
                 withCredentials([
                     string(
@@ -165,28 +155,32 @@ pipeline {
 
                         echo "main branch sorgulanıyor..."
 
-                        git \
-                            -c credential.helper="!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" \
-                            ls-remote \
-                            --heads \
-                            https://github.com/demirorsvolkan/todo.git \
-                            refs/heads/main
+                        RESULT=$(
+                            git \
+                                -c credential.helper="!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" \
+                                ls-remote \
+                                --heads \
+                                https://github.com/demirorsvolkan/todo.git \
+                                refs/heads/main
+                        )
 
+                        if [ -z "$RESULT" ]; then
+                            echo "main branch bulunamadı."
+                            exit 1
+                        fi
+
+                        echo "$RESULT"
                         echo
-                        echo "main branch sorgusu OK."
+                        echo "main branch query OK."
                     '''
                 }
             }
         }
 
 
-
-
-
-
         stage('05 - Existing Git Tags Query') {
             steps {
-                echo '========== TEST 05 - EXISTING TAGS =========='
+                echo '========== 05 - EXISTING GIT TAGS =========='
 
                 withCredentials([
                     string(
@@ -204,22 +198,28 @@ pipeline {
                             -c credential.helper="!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" \
                             ls-remote \
                             --tags \
-                            https://github.com/demirorsvolkan/todo.git
+                            https://github.com/demirorsvolkan/todo.git \
+                            > /tmp/remote-tags.txt
 
                         echo
-                        echo "Tag sorgusu OK."
+                        echo "Remote tag sayısı:"
+                        wc -l /tmp/remote-tags.txt
+
+                        echo
+                        echo "İlk 20 tag:"
+                        head -20 /tmp/remote-tags.txt || true
+
+                        echo
+                        echo "Git tag query OK."
                     '''
                 }
             }
         }
 
 
-
-
-        stage('06 - Prepare Test Variables') {
+        stage('06 - Prepare Variables') {
             steps {
                 script {
-
                     env.TEST_SHA = sh(
                         script: 'git rev-parse HEAD',
                         returnStdout: true
@@ -227,16 +227,11 @@ pipeline {
 
                     env.TEST_SHORT_SHA = env.TEST_SHA.take(7)
 
-                    env.TEST_ID = "${env.BUILD_NUMBER}-${env.TEST_SHORT_SHA}"
+                    env.TEST_ID =
+                        "${env.BUILD_NUMBER}-${env.TEST_SHORT_SHA}"
 
                     env.TEST_GITHUB_TAG =
                         "jenkins-test/${env.TEST_ID}"
-
-                    env.TEST_BACKEND_VERSION =
-                        "jenkins-test-${env.TEST_ID}"
-
-                    env.TEST_FRONTEND_VERSION =
-                        "jenkins-test-${env.TEST_ID}"
 
                     env.TEST_BACKEND_TAG =
                         "jenkins-test-${env.TEST_ID}"
@@ -244,21 +239,21 @@ pipeline {
                     env.TEST_FRONTEND_TAG =
                         "jenkins-test-${env.TEST_ID}"
 
-                    echo '========== TEST 06 - VARIABLES =========='
+                    echo '========== 06 - VARIABLES =========='
                     echo "Commit       : ${env.TEST_SHA}"
                     echo "Short SHA    : ${env.TEST_SHORT_SHA}"
                     echo "Test ID      : ${env.TEST_ID}"
                     echo "GitHub tag   : ${env.TEST_GITHUB_TAG}"
-                    echo "Backend test : ${env.TEST_BACKEND_TAG}"
-                    echo "Frontend test: ${env.TEST_FRONTEND_TAG}"
+                    echo "Backend tag  : ${env.TEST_BACKEND_TAG}"
+                    echo "Frontend tag : ${env.TEST_FRONTEND_TAG}"
                 }
             }
         }
 
 
-        stage('07 - TAG EXISTENCE CHECK') {
+        stage('07 - GitHub Tag Existence Check') {
             steps {
-                echo '========== TEST 07 - TAG EXISTENCE CHECK =========='
+                echo '========== 07 - TAG EXISTENCE CHECK =========='
 
                 withCredentials([
                     string(
@@ -273,7 +268,7 @@ pipeline {
                         SHORT_SHA="$(git rev-parse --short=7 HEAD)"
                         TEST_TAG="jenkins-test/${BUILD_NUMBER}-${SHORT_SHA}"
 
-                        echo "Test tag kontrol ediliyor:"
+                        echo "Test tag:"
                         echo "$TEST_TAG"
 
                         RESULT=$(
@@ -286,24 +281,21 @@ pipeline {
                         )
 
                         if [ -n "$RESULT" ]; then
-                            echo "SONUÇ: Test tag ZATEN VAR."
+                            echo "HATA: Test tag zaten mevcut!"
                             echo "$RESULT"
                             exit 1
                         fi
 
-                        echo "SONUÇ: Test tag YOK."
-                        echo "Tag oluşturma testine devam ediliyor."
+                        echo "Test tag mevcut değil."
                     '''
                 }
             }
         }
 
 
-
-
-        stage('08 - CREATE LOCAL TAG') {
+        stage('08 - Create Local Git Tag') {
             steps {
-                echo '========== TEST 08 - CREATE LOCAL TAG =========='
+                echo '========== 08 - CREATE LOCAL TAG =========='
 
                 sh '''
                     set -eu
@@ -311,159 +303,110 @@ pipeline {
                     SHORT_SHA="$(git rev-parse --short=7 HEAD)"
                     TEST_TAG="jenkins-test/${BUILD_NUMBER}-${SHORT_SHA}"
 
-                    echo "Local test tag oluşturuluyor..."
-                    echo "Tag: $TEST_TAG"
-                    echo "Commit: $(git rev-parse HEAD)"
-
-                    # Sadece bu Jenkins workspace/repository için identity.
-                    # Global Jenkins ayarını değiştirmiyoruz.
                     git config user.name "Jenkins"
                     git config user.email "jenkins@localhost"
+
+                    echo "Tag oluşturuluyor:"
+                    echo "$TEST_TAG"
 
                     git tag -a "$TEST_TAG" \
                         "$(git rev-parse HEAD)" \
                         -m "Jenkins integration test ${BUILD_NUMBER}-${SHORT_SHA}"
 
-                    echo
-                    echo "Oluşturulan local tag:"
-                    git show-ref --tags "$TEST_TAG"
+                    git show-ref --verify --quiet \
+                        "refs/tags/$TEST_TAG"
 
                     echo
-                    echo "Tag commit'i:"
-                    git rev-list -n 1 "$TEST_TAG"
-
-                    echo
-                    echo "Local tag oluşturma OK."
+                    echo "Local tag OK."
                 '''
             }
         }
 
 
+        stage('09 - Push GitHub Test Tag') {
+            steps {
+                echo '========== 09 - PUSH GITHUB TAG =========='
 
-  stage('09 - PUSH GITHUB TEST TAG') {
-    steps {
-        echo '========== TEST 09 - PUSH GITHUB TEST TAG =========='
+                withCredentials([
+                    string(
+                        credentialsId: 'github-token',
+                        variable: 'GITHUB_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+                        set +x
 
-        withCredentials([
-            string(
-                credentialsId: 'github-token',
-                variable: 'GITHUB_TOKEN'
-            )
-        ]) {
-            sh '''
-                set -eu
-                set +x
+                        SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+                        TEST_TAG="jenkins-test/${BUILD_NUMBER}-${SHORT_SHA}"
 
-                SHORT_SHA="$(git rev-parse --short=7 HEAD)"
-                TEST_TAG="jenkins-test/${BUILD_NUMBER}-${SHORT_SHA}"
+                        git show-ref --verify --quiet \
+                            "refs/tags/$TEST_TAG"
 
-                echo "Test tag GitHub'a pushlanıyor..."
-                echo "Tag: $TEST_TAG"
+                        echo "GitHub'a tag pushlanıyor..."
+                        echo "$TEST_TAG"
 
-                # Önce local tag gerçekten var mı?
-                git show-ref --verify --quiet "refs/tags/$TEST_TAG"
+                        git \
+                            -c credential.helper="!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" \
+                            push \
+                            https://github.com/demirorsvolkan/todo.git \
+                            "refs/tags/$TEST_TAG"
 
-                # GitHub HTTPS authentication
-                git \
-                    -c credential.helper="!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" \
-                    push \
-                    https://github.com/demirorsvolkan/todo.git \
-                    "refs/tags/$TEST_TAG"
-
-                echo
-                echo "GitHub tag push OK."
-            '''
+                        echo
+                        echo "GitHub tag push OK."
+                    '''
+                }
+            }
         }
-    }
-}
 
 
+        stage('10 - Verify GitHub Test Tag') {
+            steps {
+                echo '========== 10 - VERIFY GITHUB TAG =========='
 
+                withCredentials([
+                    string(
+                        credentialsId: 'github-token',
+                        variable: 'GITHUB_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+                        set +x
 
-        stage('10 - VERIFY GITHUB TEST TAG') {
-    steps {
-        echo '========== TEST 10 - VERIFY GITHUB TEST TAG =========='
+                        SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+                        TEST_TAG="jenkins-test/${BUILD_NUMBER}-${SHORT_SHA}"
 
-        withCredentials([
-            string(
-                credentialsId: 'github-token',
-                variable: 'GITHUB_TOKEN'
-            )
-        ]) {
-            sh '''
-                set -eu
-                set +x
+                        echo "GitHub tag doğrulanıyor..."
+                        echo "$TEST_TAG"
 
-                SHORT_SHA="$(git rev-parse --short=7 HEAD)"
-                EXPECTED_COMMIT="$(git rev-parse HEAD)"
-                TEST_TAG="jenkins-test/${BUILD_NUMBER}-${SHORT_SHA}"
+                        RESULT=$(
+                            git \
+                                -c credential.helper="!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" \
+                                ls-remote \
+                                --tags \
+                                https://github.com/demirorsvolkan/todo.git \
+                                "refs/tags/$TEST_TAG"
+                        )
 
-                echo "GitHub test tag doğrulanıyor..."
-                echo "Tag: $TEST_TAG"
-                echo "Beklenen commit: $EXPECTED_COMMIT"
+                        if [ -z "$RESULT" ]; then
+                            echo "HATA: GitHub tag bulunamadı."
+                            exit 1
+                        fi
 
-                TAG_RESULT=$(
-                    git \
-                        -c credential.helper="!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" \
-                        ls-remote \
-                        --tags \
-                        https://github.com/demirorsvolkan/todo.git \
-                        "refs/tags/$TEST_TAG"
-                )
+                        echo "$RESULT"
 
-                if [ -z "$TAG_RESULT" ]; then
-                    echo "HATA: GitHub üzerinde test tag bulunamadı!"
-                    exit 1
-                fi
-
-                echo
-                echo "GitHub tag bulundu:"
-                echo "$TAG_RESULT"
-
-                TAG_OBJECT_SHA="$(
-                    echo "$TAG_RESULT" | awk '{print $1}'
-                )"
-
-                echo
-                echo "Tag object SHA: $TAG_OBJECT_SHA"
-
-                # Annotated tag'in gerçekten beklenen commit'i
-                # işaret ettiğini GitHub API üzerinden doğrula.
-                TAG_API_RESULT=$(
-                    curl -fsS \
-                        -H "Authorization: Bearer $GITHUB_TOKEN" \
-                        -H "Accept: application/vnd.github+json" \
-                        "https://api.github.com/repos/demirorsvolkan/todo/git/ref/tags/$TEST_TAG"
-                )
-
-                echo
-                echo "GitHub tag API doğrulaması OK."
-
-                TAG_REF_OBJECT="$(
-                    echo "$TAG_API_RESULT" |
-                    sed -n 's/.*"sha": *"\\([^"]*\\)".*/\\1/p' |
-                    head -1
-                )"
-
-                if [ -z "$TAG_REF_OBJECT" ]; then
-                    echo "HATA: GitHub tag SHA alınamadı."
-                    exit 1
-                fi
-
-                echo "GitHub tag ref SHA: $TAG_REF_OBJECT"
-
-                echo
-                echo "GitHub test tag doğrulama OK."
-            '''
+                        echo
+                        echo "GitHub tag verification OK."
+                    '''
+                }
+            }
         }
-    }
-}
-
 
 
         stage('11 - Docker Hub Login') {
             steps {
-                echo '========== TEST 11 - DOCKER HUB LOGIN =========='
+                echo '========== 11 - DOCKER HUB LOGIN =========='
 
                 withCredentials([
                     usernamePassword(
@@ -478,8 +421,6 @@ pipeline {
 
                         test -n "$DOCKER_USERNAME"
                         test -n "$DOCKER_PASSWORD"
-
-                        echo "Docker Hub login deneniyor..."
 
                         printf '%s\\n' "$DOCKER_PASSWORD" |
                             docker login \
@@ -496,7 +437,126 @@ pipeline {
 
         stage('12 - Docker Hub Repository Access') {
             steps {
-                echo '========== TEST 12 - DOCKER HUB REPOSITORY ACCESS =========='
+                echo '========== 12 - DOCKER HUB REPOSITORY ACCESS =========='
+
+                sh '''
+                    set -eu
+
+                    echo "Docker Hub erişimi test ediliyor..."
+
+                    docker manifest inspect \
+                        "$BACKEND_IMAGE:latest" \
+                        >/dev/null
+
+                    echo "Backend repository OK."
+
+                    docker manifest inspect \
+                        "$FRONTEND_IMAGE:latest" \
+                        >/dev/null
+
+                    echo "Frontend repository OK."
+                '''
+            }
+        }
+
+
+        stage('13 - Docker Existing Tags Query') {
+            steps {
+                echo '========== 13 - DOCKER EXISTING TAGS =========='
+
+                sh '''
+                    set -eu
+
+                    echo "Backend latest:"
+                    docker manifest inspect \
+                        "$BACKEND_IMAGE:latest"
+
+                    echo
+                    echo "Frontend latest:"
+                    docker manifest inspect \
+                        "$FRONTEND_IMAGE:latest"
+
+                    echo
+                    echo "Docker existing tags query OK."
+                '''
+            }
+        }
+
+
+        stage('14 - Build Backend') {
+            steps {
+                echo '========== 14 - BUILD BACKEND =========='
+
+                sh '''
+                    set -eu
+
+                    test -d backend
+                    test -f backend/Dockerfile
+
+                    docker build \
+                        -t "$BACKEND_IMAGE:$TEST_BACKEND_TAG" \
+                        ./backend
+
+                    docker image inspect \
+                        "$BACKEND_IMAGE:$TEST_BACKEND_TAG" \
+                        >/dev/null
+
+                    echo
+                    echo "Backend build OK."
+                '''
+            }
+        }
+
+
+        stage('15 - Build Frontend') {
+            steps {
+                echo '========== 15 - BUILD FRONTEND =========='
+
+                sh '''
+                    set -eu
+
+                    test -d frontend
+                    test -f frontend/Dockerfile
+
+                    docker build \
+                        -t "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG" \
+                        ./frontend
+
+                    docker image inspect \
+                        "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG" \
+                        >/dev/null
+
+                    echo
+                    echo "Frontend build OK."
+                '''
+            }
+        }
+
+
+        stage('16 - Local Image Verification') {
+            steps {
+                echo '========== 16 - LOCAL IMAGE VERIFICATION =========='
+
+                sh '''
+                    set -eu
+
+                    docker image inspect \
+                        "$BACKEND_IMAGE:$TEST_BACKEND_TAG" \
+                        >/dev/null
+
+                    docker image inspect \
+                        "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG" \
+                        >/dev/null
+
+                    echo "Both local images OK."
+                '''
+            }
+        }
+
+
+        stage('17 - Push Backend Image') {
+            steps {
+                echo '========== 17 - PUSH BACKEND IMAGE =========='
 
                 withCredentials([
                     usernamePassword(
@@ -509,174 +569,59 @@ pipeline {
                         set -eu
                         set +x
 
-                        echo "Backend repository kontrolü..."
+                        printf '%s\\n' "$DOCKER_PASSWORD" |
+                            docker login \
+                                --username "$DOCKER_USERNAME" \
+                                --password-stdin
 
-                        docker manifest inspect \
-                            "$BACKEND_IMAGE:latest" \
-                            >/dev/null 2>&1 || true
-
-                        echo "Backend repository erişim sorgusu tamamlandı."
+                        docker push \
+                            "$BACKEND_IMAGE:$TEST_BACKEND_TAG"
 
                         echo
-                        echo "Frontend repository kontrolü..."
-
-                        docker manifest inspect \
-                            "$FRONTEND_IMAGE:latest" \
-                            >/dev/null 2>&1 || true
-
-                        echo "Frontend repository erişim sorgusu tamamlandı."
+                        echo "Backend Docker push OK."
                     '''
                 }
             }
         }
 
 
-        stage('13 - Docker Existing Tags Query') {
+        stage('18 - Push Frontend Image') {
             steps {
-                echo '========== TEST 13 - DOCKER EXISTING TAGS =========='
+                echo '========== 18 - PUSH FRONTEND IMAGE =========='
 
-                sh '''
-                    set -eu
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKER_USERNAME',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+                        set +x
 
-                    echo "Backend latest manifest:"
-                    docker manifest inspect \
-                        "$BACKEND_IMAGE:latest" \
-                        2>&1 || true
+                        printf '%s\\n' "$DOCKER_PASSWORD" |
+                            docker login \
+                                --username "$DOCKER_USERNAME" \
+                                --password-stdin
 
-                    echo
-                    echo "Frontend latest manifest:"
-                    docker manifest inspect \
-                        "$FRONTEND_IMAGE:latest" \
-                        2>&1 || true
-                '''
+                        docker push \
+                            "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG"
+
+                        echo
+                        echo "Frontend Docker push OK."
+                    '''
+                }
             }
         }
 
 
-        stage('14 - Docker Build Backend') {
+        stage('19 - Verify Backend Remote Image') {
             steps {
-                echo '========== TEST 14 - BUILD BACKEND =========='
+                echo '========== 19 - VERIFY BACKEND IMAGE =========='
 
                 sh '''
                     set -eu
-
-                    test -d backend
-
-                    echo "Backend Dockerfile:"
-                    test -f backend/Dockerfile
-
-                    echo
-                    echo "Backend image build başlıyor..."
-
-                    docker build \
-                        -t "$BACKEND_IMAGE:$TEST_BACKEND_TAG" \
-                        ./backend
-
-                    echo
-                    echo "Backend build OK."
-                '''
-            }
-        }
-
-
-        stage('15 - Docker Build Frontend') {
-            steps {
-                echo '========== TEST 15 - BUILD FRONTEND =========='
-
-                sh '''
-                    set -eu
-
-                    test -d frontend
-
-                    echo "Frontend Dockerfile:"
-                    test -f frontend/Dockerfile
-
-                    echo
-                    echo "Frontend image build başlıyor..."
-
-                    docker build \
-                        -t "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG" \
-                        ./frontend
-
-                    echo
-                    echo "Frontend build OK."
-                '''
-            }
-        }
-
-
-        stage('16 - Docker Local Image Verification') {
-            steps {
-                echo '========== TEST 16 - LOCAL IMAGE VERIFICATION =========='
-
-                sh '''
-                    set -eu
-
-                    echo "Backend image:"
-                    docker image inspect \
-                        "$BACKEND_IMAGE:$TEST_BACKEND_TAG" \
-                        >/dev/null
-
-                    echo "Backend image OK."
-
-                    echo
-                    echo "Frontend image:"
-                    docker image inspect \
-                        "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG" \
-                        >/dev/null
-
-                    echo "Frontend image OK."
-                '''
-            }
-        }
-
-
-        stage('17 - Push Backend Test Image') {
-            steps {
-                echo '========== TEST 17 - PUSH BACKEND IMAGE =========='
-
-                sh '''
-                    set -eu
-
-                    echo "Backend test image pushlanıyor..."
-
-                    docker push \
-                        "$BACKEND_IMAGE:$TEST_BACKEND_TAG"
-
-                    echo
-                    echo "Backend Docker push OK."
-                '''
-            }
-        }
-
-
-        stage('18 - Push Frontend Test Image') {
-            steps {
-                echo '========== TEST 18 - PUSH FRONTEND IMAGE =========='
-
-                sh '''
-                    set -eu
-
-                    echo "Frontend test image pushlanıyor..."
-
-                    docker push \
-                        "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG"
-
-                    echo
-                    echo "Frontend Docker push OK."
-                '''
-            }
-        }
-
-
-        stage('19 - Verify Backend Docker Image') {
-            steps {
-                echo '========== TEST 19 - VERIFY BACKEND IMAGE =========='
-
-                sh '''
-                    set -eu
-
-                    echo "Backend remote image kontrol ediliyor..."
 
                     docker manifest inspect \
                         "$BACKEND_IMAGE:$TEST_BACKEND_TAG"
@@ -688,14 +633,12 @@ pipeline {
         }
 
 
-        stage('20 - Verify Frontend Docker Image') {
+        stage('20 - Verify Frontend Remote Image') {
             steps {
-                echo '========== TEST 20 - VERIFY FRONTEND IMAGE =========='
+                echo '========== 20 - VERIFY FRONTEND IMAGE =========='
 
                 sh '''
                     set -eu
-
-                    echo "Frontend remote image kontrol ediliyor..."
 
                     docker manifest inspect \
                         "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG"
@@ -709,21 +652,25 @@ pipeline {
 
         stage('21 - Backend Digest') {
             steps {
-                echo '========== TEST 21 - BACKEND DIGEST =========='
+                echo '========== 21 - BACKEND DIGEST =========='
 
                 sh '''
                     set -eu
 
-                    docker buildx imagetools inspect \
-                        "$BACKEND_IMAGE:$TEST_BACKEND_TAG" |
-                    grep -m 1 '^Digest:' |
-                    awk '{print $2}' |
-                    tee /tmp/backend-digest.txt
+                    DIGEST=$(
+                        docker buildx imagetools inspect \
+                            "$BACKEND_IMAGE:$TEST_BACKEND_TAG" |
+                        grep -m 1 '^Digest:' |
+                        awk '{print $2}'
+                    )
 
-                    test -s /tmp/backend-digest.txt
+                    test -n "$DIGEST"
 
-                    echo
-                    echo "Backend digest OK."
+                    echo "Backend digest:"
+                    echo "$DIGEST"
+
+                    printf '%s\\n' "$DIGEST" \
+                        > /tmp/backend-digest.txt
                 '''
             }
         }
@@ -731,78 +678,81 @@ pipeline {
 
         stage('22 - Frontend Digest') {
             steps {
-                echo '========== TEST 22 - FRONTEND DIGEST =========='
+                echo '========== 22 - FRONTEND DIGEST =========='
 
                 sh '''
                     set -eu
 
-                    docker buildx imagetools inspect \
-                        "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG" |
-                    grep -m 1 '^Digest:' |
-                    awk '{print $2}' |
-                    tee /tmp/frontend-digest.txt
+                    DIGEST=$(
+                        docker buildx imagetools inspect \
+                            "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG" |
+                        grep -m 1 '^Digest:' |
+                        awk '{print $2}'
+                    )
 
-                    test -s /tmp/frontend-digest.txt
+                    test -n "$DIGEST"
 
-                    echo
-                    echo "Frontend digest OK."
+                    echo "Frontend digest:"
+                    echo "$DIGEST"
+
+                    printf '%s\\n' "$DIGEST" \
+                        > /tmp/frontend-digest.txt
                 '''
             }
         }
 
 
-        stage('23 - Final Integration Verification') {
+        stage('23 - Final Verification') {
             steps {
-                echo '========== TEST 23 - FINAL INTEGRATION CHECK =========='
+                echo '========== 23 - FINAL VERIFICATION =========='
 
-                withCredentials([
-                    string(
-                        credentialsId: 'github-token',
-                        variable: 'GITHUB_TOKEN'
-                    )
-                ]) {
-                    sh '''
-                        set -eu
-                        set +x
+                sh '''
+                    set -eu
 
-                        echo "========================================"
-                        echo "FINAL TEST"
-                        echo "========================================"
+                    echo "========================================"
+                    echo "FINAL INTEGRATION TEST"
+                    echo "========================================"
 
-                        echo
-                        echo "GitHub:"
-                        echo "  Repository access : OK"
-                        echo "  Tag push           : OK"
-                        echo "  Tag verification   : OK"
+                    echo
+                    echo "GitHub"
+                    echo "------"
+                    echo "Authentication : OK"
+                    echo "Repository     : OK"
+                    echo "Branch query   : OK"
+                    echo "Tag query      : OK"
+                    echo "Tag create     : OK"
+                    echo "Tag push       : OK"
+                    echo "Tag verify     : OK"
 
-                        echo
-                        echo "Docker Hub:"
-                        echo "  Login              : OK"
-                        echo "  Backend build      : OK"
-                        echo "  Backend push       : OK"
-                        echo "  Backend verify     : OK"
-                        echo "  Frontend build     : OK"
-                        echo "  Frontend push      : OK"
-                        echo "  Frontend verify    : OK"
+                    echo
+                    echo "Docker Hub"
+                    echo "----------"
+                    echo "Authentication : OK"
+                    echo "Repository     : OK"
+                    echo "Backend build  : OK"
+                    echo "Backend push   : OK"
+                    echo "Backend verify : OK"
+                    echo "Frontend build : OK"
+                    echo "Frontend push  : OK"
+                    echo "Frontend verify: OK"
 
-                        echo
-                        echo "Test GitHub tag:"
-                        echo "$TEST_GITHUB_TAG"
+                    echo
+                    echo "GitHub tag:"
+                    echo "$TEST_GITHUB_TAG"
 
-                        echo
-                        echo "Backend test image:"
-                        echo "$BACKEND_IMAGE:$TEST_BACKEND_TAG"
+                    echo
+                    echo "Backend image:"
+                    echo "$BACKEND_IMAGE:$TEST_BACKEND_TAG"
 
-                        echo
-                        echo "Frontend test image:"
-                        echo "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG"
+                    echo
+                    echo "Frontend image:"
+                    echo "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG"
 
-                        echo
-                        echo "========================================"
-                        echo "ALL TESTS PASSED"
-                        echo "========================================"
-                    '''
-                }
+                    echo
+                    echo "========================================"
+                    echo "ALL TESTS PASSED"
+                    echo "========================================"
+                '''
             }
         }
     }
@@ -813,16 +763,18 @@ pipeline {
         success {
             echo '''
 ========================================
-JENKINS INTEGRATION TEST: SUCCESS
+JENKINS PIPELINE: SUCCESS
 ========================================
 GitHub authentication      : OK
 GitHub repository access   : OK
+GitHub branch query        : OK
 GitHub tag create/push     : OK
 GitHub tag verification    : OK
 Docker Hub authentication  : OK
 Docker backend build/push  : OK
 Docker frontend build/push : OK
 Docker image verification  : OK
+Digest verification       : OK
 ========================================
 '''
         }
@@ -831,17 +783,16 @@ Docker image verification  : OK
         failure {
             echo '''
 ========================================
-JENKINS INTEGRATION TEST: FAILED
+JENKINS PIPELINE: FAILED
 ========================================
-Yukarıdaki son "TEST XX" aşaması
-başarısız olan operasyonu gösterir.
+Yukarıdaki son "TEST XX"
+başarısız olan aşamadır.
 ========================================
 '''
         }
 
 
         always {
-
             script {
 
                 echo '========== CLEANUP =========='
@@ -849,30 +800,31 @@ başarısız olan operasyonu gösterir.
                 sh '''
                     set +e
 
-                    echo "Local Git test tag siliniyor..."
+                    echo "Local Git tag cleanup..."
 
-                    git tag -d "$TEST_GITHUB_TAG" \
-                        >/dev/null 2>&1 || true
+                    if [ -n "${TEST_GITHUB_TAG:-}" ]; then
+                        git tag -d "$TEST_GITHUB_TAG" \
+                            >/dev/null 2>&1 || true
+                    fi
 
-                    echo "Local Docker backend image siliniyor..."
+                    echo "Local backend image cleanup..."
 
-                    docker rmi \
-                        "$BACKEND_IMAGE:$TEST_BACKEND_TAG" \
-                        >/dev/null 2>&1 || true
+                    if [ -n "${TEST_BACKEND_TAG:-}" ]; then
+                        docker rmi \
+                            "$BACKEND_IMAGE:$TEST_BACKEND_TAG" \
+                            >/dev/null 2>&1 || true
+                    fi
 
-                    echo "Local Docker frontend image siliniyor..."
+                    echo "Local frontend image cleanup..."
 
-                    docker rmi \
-                        "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG" \
-                        >/dev/null 2>&1 || true
+                    if [ -n "${TEST_FRONTEND_TAG:-}" ]; then
+                        docker rmi \
+                            "$FRONTEND_IMAGE:$TEST_FRONTEND_TAG" \
+                            >/dev/null 2>&1 || true
+                    fi
                 '''
 
 
-                /*
-                 * Gerçek remote cleanup.
-                 *
-                 * Sadece bu testin oluşturduğu isimler silinir.
-                 */
                 withCredentials([
                     string(
                         credentialsId: 'github-token',
@@ -892,37 +844,49 @@ başarısız olan operasyonu gösterir.
                         echo
                         echo "Remote GitHub test tag cleanup..."
 
-                        git \
-                            -c http.extraheader="Authorization: Bearer ${GITHUB_TOKEN}" \
-                            push \
-                            origin \
-                            --delete \
-                            "$TEST_GITHUB_TAG" \
-                            >/dev/null 2>&1 || true
+                        if [ -n "${TEST_GITHUB_TAG:-}" ]; then
+
+                            git \
+                                -c credential.helper="!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" \
+                                push \
+                                https://github.com/demirorsvolkan/todo.git \
+                                --delete \
+                                "$TEST_GITHUB_TAG" \
+                                >/dev/null 2>&1 || true
+
+                        fi
 
                         echo "GitHub cleanup tamamlandı."
 
                         echo
                         echo "Docker backend test tag cleanup..."
 
-                        curl \
-                            -sS \
-                            -X DELETE \
-                            -u "${DOCKER_USERNAME}:${DOCKER_PASSWORD}" \
-                            "https://hub.docker.com/v2/repositories/${BACKEND_IMAGE}/tags/${TEST_BACKEND_TAG}/" \
-                            >/dev/null 2>&1 || true
+                        if [ -n "${TEST_BACKEND_TAG:-}" ]; then
+
+                            curl \
+                                -sS \
+                                -X DELETE \
+                                -u "${DOCKER_USERNAME}:${DOCKER_PASSWORD}" \
+                                "https://hub.docker.com/v2/repositories/${BACKEND_IMAGE}/tags/${TEST_BACKEND_TAG}/" \
+                                >/dev/null 2>&1 || true
+
+                        fi
 
                         echo "Backend cleanup tamamlandı."
 
                         echo
                         echo "Docker frontend test tag cleanup..."
 
-                        curl \
-                            -sS \
-                            -X DELETE \
-                            -u "${DOCKER_USERNAME}:${DOCKER_PASSWORD}" \
-                            "https://hub.docker.com/v2/repositories/${FRONTEND_IMAGE}/tags/${TEST_FRONTEND_TAG}/" \
-                            >/dev/null 2>&1 || true
+                        if [ -n "${TEST_FRONTEND_TAG:-}" ]; then
+
+                            curl \
+                                -sS \
+                                -X DELETE \
+                                -u "${DOCKER_USERNAME}:${DOCKER_PASSWORD}" \
+                                "https://hub.docker.com/v2/repositories/${FRONTEND_IMAGE}/tags/${TEST_FRONTEND_TAG}/" \
+                                >/dev/null 2>&1 || true
+
+                        fi
 
                         echo "Frontend cleanup tamamlandı."
 
