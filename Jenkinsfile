@@ -76,30 +76,21 @@ pipeline {
                     env.BACKEND_BASE_TAG = findLatestValidTag('backend', env.TRIGGER_SHA)
                     env.FRONTEND_BASE_TAG = findLatestValidTag('frontend', env.TRIGGER_SHA)
 
-                    def backendFirstRelease = env.BACKEND_BASE_TAG == 'backend/v0.0.0-sha.0000000'
-                    def frontendFirstRelease = env.FRONTEND_BASE_TAG == 'frontend/v0.0.0-sha.0000000'
-
-                    if (backendFirstRelease) {
-                        env.BACKEND_CHANGED = 'true'
-                    } else {
-                        env.BACKEND_BASE_COMMIT = getTagCommit(env.BACKEND_BASE_TAG)
-                        env.BACKEND_CHANGED = gitDiffExists(
-                            env.BACKEND_BASE_COMMIT,
+                    env.BACKEND_CHANGED = env.BACKEND_BASE_TAG == 'backend/v0.0.0-sha.0000000' ? 'true' : (
+                        gitDiffExists(
+                            getTagCommit(env.BACKEND_BASE_TAG),
                             env.TRIGGER_SHA,
                             'backend/'
                         ) ? 'true' : 'false'
-                    }
+                    )
 
-                    if (frontendFirstRelease) {
-                        env.FRONTEND_CHANGED = 'true'
-                    } else {
-                        env.FRONTEND_BASE_COMMIT = getTagCommit(env.FRONTEND_BASE_TAG)
-                        env.FRONTEND_CHANGED = gitDiffExists(
-                            env.FRONTEND_BASE_COMMIT,
+                    env.FRONTEND_CHANGED = env.FRONTEND_BASE_TAG == 'frontend/v0.0.0-sha.0000000' ? 'true' : (
+                        gitDiffExists(
+                            getTagCommit(env.FRONTEND_BASE_TAG),
                             env.TRIGGER_SHA,
                             'frontend/'
                         ) ? 'true' : 'false'
-                    }
+                    )
 
                     echo "Backend base    : ${env.BACKEND_BASE_TAG}"
                     echo "Backend changed : ${env.BACKEND_CHANGED}"
@@ -108,6 +99,7 @@ pipeline {
                 }
             }
         }
+
 
 
         stage('Calculate Versions') {
