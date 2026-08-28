@@ -436,41 +436,48 @@ def parseTag(String tag, String component) {
 
 def getTagCommit(String tag) {
     if (tag.endsWith('/v0.0.0-sha.0000000')) {
-        return '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+        return ''
     }
 
-    withEnv(["TAG=$tag"]) {
-        return sh(
-            script: 'git rev-list -n 1 "$TAG"',
+    return withEnv(["RELEASE_TAG=${tag}"]) {
+        sh(
+            script: '''
+                set -e
+                git rev-list -n 1 "$RELEASE_TAG"
+            ''',
             returnStdout: true
         ).trim()
     }
 }
 
+
 def gitDiffExists(String oldCommit, String newCommit, String componentPath) {
+    if (!oldCommit) {
+        return sh(
+            script: "git ls-tree -r --name-only '${newCommit}' -- '${componentPath}' | grep -q .",
+            returnStatus: true
+        ) == 0
+    }
+
     def result = withEnv([
-        "OLD=$oldCommit",
-        "NEW=$newCommit",
-        "PATH_TO_CHECK=$componentPath"
+        "OLD_COMMIT=${oldCommit}",
+        "NEW_COMMIT=${newCommit}",
+        "COMPONENT_PATH=${componentPath}"
     ]) {
         sh(
             script: '''
-                git diff --quiet "$OLD" "$NEW" -- "$PATH_TO_CHECK"
+                git diff --quiet "$OLD_COMMIT" "$NEW_COMMIT" -- "$COMPONENT_PATH"
             ''',
             returnStatus: true
         )
     }
 
-    if (result == 0) {
-        return false
-    }
-
-    if (result == 1) {
-        return true
-    }
+    if (result == 0) return false
+    if (result == 1) return true
 
     error("Git diff failed: ${componentPath}")
 }
+
 
 def checkDockerImage(
     String image,
