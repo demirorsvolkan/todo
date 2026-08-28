@@ -76,29 +76,36 @@ pipeline {
                     env.BACKEND_BASE_TAG = findLatestValidTag('backend', env.TRIGGER_SHA)
                     env.FRONTEND_BASE_TAG = findLatestValidTag('frontend', env.TRIGGER_SHA)
 
-                    env.BACKEND_CHANGED = env.BACKEND_BASE_TAG == 'backend/v0.0.0-sha.0000000' ? 'true' : (
-                        gitDiffExists(
+                    // İlk release: hiçbir karşılaştırma yapma.
+                    if (!env.BACKEND_BASE_TAG) {
+                        env.BACKEND_CHANGED = 'true'
+                    } else {
+                        env.BACKEND_CHANGED = gitDiffExists(
                             getTagCommit(env.BACKEND_BASE_TAG),
                             env.TRIGGER_SHA,
                             'backend/'
                         ) ? 'true' : 'false'
-                    )
+                    }
 
-                    env.FRONTEND_CHANGED = env.FRONTEND_BASE_TAG == 'frontend/v0.0.0-sha.0000000' ? 'true' : (
-                        gitDiffExists(
+                    if (!env.FRONTEND_BASE_TAG) {
+                        env.FRONTEND_CHANGED = 'true'
+                    } else {
+                        env.FRONTEND_CHANGED = gitDiffExists(
                             getTagCommit(env.FRONTEND_BASE_TAG),
                             env.TRIGGER_SHA,
                             'frontend/'
                         ) ? 'true' : 'false'
-                    )
+                    }
 
-                    echo "Backend base    : ${env.BACKEND_BASE_TAG}"
+                    echo "Backend base    : ${env.BACKEND_BASE_TAG ?: 'YOK → 0.0.0'}"
                     echo "Backend changed : ${env.BACKEND_CHANGED}"
-                    echo "Frontend base   : ${env.FRONTEND_BASE_TAG}"
+                    echo "Frontend base   : ${env.FRONTEND_BASE_TAG ?: 'YOK → 0.0.0'}"
                     echo "Frontend changed: ${env.FRONTEND_CHANGED}"
                 }
             }
         }
+
+
 
 
 
@@ -405,8 +412,9 @@ def findLatestValidTag(String component, String triggerSha) {
     }
 
     if (!tags) {
-        return "${component}/v0.0.0-sha.0000000"
+        return ''
     }
+
 
     for (String tag : tags.split('\n')) {
         tag = tag.trim()
@@ -464,9 +472,6 @@ def parseTag(String tag, String component) {
 }
 
 def getTagCommit(String tag) {
-    if (tag.endsWith('/v0.0.0-sha.0000000')) {
-        return ''
-    }
 
     return withEnv(["RELEASE_TAG=${tag}"]) {
         sh(
