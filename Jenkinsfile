@@ -35,6 +35,18 @@ pipeline {
             steps {
                 script {
 
+                    /*
+                     * Bunlar Declarative environment içinde DEĞİL.
+                     * Imperative env değişkeni olarak oluşturuluyor.
+                     * Böylece sonraki stage'lerde değiştirilebilir.
+                     */
+                    env.BACKEND_CHANGED = 'false'
+                    env.FRONTEND_CHANGED = 'false'
+
+                    env.BACKEND_SKIP = 'false'
+                    env.FRONTEND_SKIP = 'false'
+
+
                     def isTagBuild = sh(
                         script: '''
                             if [ -n "${TAG_NAME:-}" ]; then
@@ -50,10 +62,12 @@ pipeline {
                         returnStatus: true
                     ) == 0
 
+
                     if (isTagBuild) {
                         currentBuild.result = 'NOT_BUILT'
                         error('Tag-triggered build ignored.')
                     }
+
 
                     env.TRIGGER_SHA = sh(
                         script: 'git rev-parse HEAD',
@@ -66,6 +80,7 @@ pipeline {
                         script: 'git log -1 --pretty=%B',
                         returnStdout: true
                     ).trim()
+
 
                     echo "Trigger SHA    : ${env.TRIGGER_SHA}"
                     echo "Short SHA      : ${env.SHORT_SHA}"
@@ -80,17 +95,14 @@ pipeline {
                 script {
 
                     /*
-                     * NONE = Bu component için daha önce
-                     * hiçbir release tag'ı yok.
+                     * Her component için EN SON GEÇERLİ RELEASE TAG'INI bul.
                      *
-                     * İLK RELEASE durumunda:
-                     * - diff yapılmaz
-                     * - component otomatik changed=true kabul edilir
+                     * NONE:
+                     * O component için daha önce release yok.
+                     *
+                     * İlk release'de karşılaştırma YAPILMAZ.
+                     * Component release edilecek kabul edilir.
                      */
-                    def backendChanged = false
-                    def frontendChanged = false
-
-
                     env.BACKEND_BASE_TAG = findLatestValidTag(
                         'backend',
                         env.TRIGGER_SHA
@@ -102,86 +114,115 @@ pipeline {
                     )
 
 
-                    // ==========================
+                    // ========================================
                     // BACKEND
-                    // ==========================
+                    // ========================================
 
                     if (env.BACKEND_BASE_TAG == 'NONE') {
 
-                        backendChanged = 'true'
+                        /*
+                         * Daha önce backend release edilmemiş.
+                         *
+                         * Karşılaştırılacak backend release yok.
+                         * Bu nedenle ilk release oluşturulur.
+                         */
+                        env.BACKEND_CHANGED = 'true'
 
-                        echo 'Backend: RELEASE YOK'
-                        echo 'Backend: İlk release → 0.0.0 baz alınacak'
-                        echo 'Backend: Diff kontrolü YOK'
-                        echo 'Backend: Changed = true'
+                        echo 'Backend release : YOK'
+                        echo 'Backend mode    : FIRST RELEASE'
+                        echo 'Backend base    : 0.0.0'
+                        echo 'Backend diff    : YOK - ilk release'
+                        echo 'Backend changed : true'
 
                     } else {
 
+                        /*
+                         * Daha önce release var.
+                         * Artık gerçek diff yapılır.
+                         */
                         def backendCommit = getTagCommit(
                             env.BACKEND_BASE_TAG
                         )
 
-                        backendChanged = gitDiffExists(
+                        def backendChanged = gitDiffExists(
                             backendCommit,
                             env.TRIGGER_SHA,
                             'backend/'
-                        ) ? 'true' : 'false'
+                        )
+
+                        env.BACKEND_CHANGED =
+                            backendChanged ? 'true' : 'false'
 
                         echo "Backend release : ${env.BACKEND_BASE_TAG}"
                         echo "Backend commit  : ${backendCommit}"
-                        echo "Backend changed : ${backendChanged}"
+                        echo "Backend changed : ${env.BACKEND_CHANGED}"
                     }
 
 
-                    // ==========================
+                    // ========================================
                     // FRONTEND
-                    // ==========================
+                    // ========================================
 
                     if (env.FRONTEND_BASE_TAG == 'NONE') {
 
-                        frontendChanged = 'true'
+                        /*
+                         * Daha önce frontend release edilmemiş.
+                         *
+                         * Karşılaştırılacak frontend release yok.
+                         * İlk release oluşturulur.
+                         */
+                        env.FRONTEND_CHANGED = 'true'
 
-                        echo 'Frontend: RELEASE YOK'
-                        echo 'Frontend: İlk release → 0.0.0 baz alınacak'
-                        echo 'Frontend: Diff kontrolü YOK'
-                        echo 'Frontend: Changed = true'
+                        echo 'Frontend release : YOK'
+                        echo 'Frontend mode    : FIRST RELEASE'
+                        echo 'Frontend base    : 0.0.0'
+                        echo 'Frontend diff    : YOK - ilk release'
+                        echo 'Frontend changed : true'
 
                     } else {
 
+                        /*
+                         * Daha önce release var.
+                         * Artık gerçek diff yapılır.
+                         */
                         def frontendCommit = getTagCommit(
                             env.FRONTEND_BASE_TAG
                         )
 
-                        frontendChanged = gitDiffExists(
+                        def frontendChanged = gitDiffExists(
                             frontendCommit,
                             env.TRIGGER_SHA,
                             'frontend/'
-                        ) ? 'true' : 'false'
+                        )
+
+                        env.FRONTEND_CHANGED =
+                            frontendChanged ? 'true' : 'false'
 
                         echo "Frontend release : ${env.FRONTEND_BASE_TAG}"
                         echo "Frontend commit  : ${frontendCommit}"
-                        echo "Frontend changed : ${frontendChanged}"
+                        echo "Frontend changed : ${env.FRONTEND_CHANGED}"
                     }
 
 
                     echo '========================================'
                     echo "Backend base    : ${env.BACKEND_BASE_TAG}"
-                    echo "Backend changed : ${backendChanged}"
+                    echo "Backend changed : ${env.BACKEND_CHANGED}"
                     echo "Frontend base   : ${env.FRONTEND_BASE_TAG}"
-                    echo "Frontend changed: ${frontendChanged}"
+                    echo "Frontend changed: ${env.FRONTEND_CHANGED}"
                     echo '========================================'
 
 
                     /*
-                     * Burada artık ilk release problemi yaşanmaz.
-                     *
-                     * Hiç release yoksa zaten changed=true.
+                     * Gerçekten hiçbir component değişmediyse
+                     * release yapma.
                      */
                     if (
-                        backendChanged != 'true' &&
-                        frontendChanged != 'true'
+                        env.BACKEND_CHANGED != 'true' &&
+                        env.FRONTEND_CHANGED != 'true'
                     ) {
-                        error('Backend veya frontend değişmedi.')
+                        error(
+                            'Backend veya frontend değişmedi.'
+                        )
                     }
                 }
             }
@@ -193,43 +234,49 @@ pipeline {
                 script {
 
                     /*
-                     * Commit mesajı SADECE version bump
-                     * türünü belirler.
+                     * Commit mesajı version bump türünü belirler.
                      *
-                     * feat!:  -> major
-                     * feat:   -> minor
-                     * diğer   -> patch
+                     * feat!: -> major
+                     * feat:  -> minor
+                     * diğer  -> patch
                      */
-
                     def versionType = 'patch'
 
                     if (env.COMMIT_MESSAGE =~ '(?m)^feat!:') {
                         versionType = 'major'
+
                     } else if (env.COMMIT_MESSAGE =~ '(?m)^feat:') {
                         versionType = 'minor'
                     }
 
 
-
-                    // ==========================
+                    // ========================================
                     // BACKEND VERSION
-                    // ==========================
+                    // ========================================
 
-                    if (backendChanged == 'true') {
+                    if (env.BACKEND_CHANGED == 'true') {
 
                         if (env.BACKEND_BASE_TAG == 'NONE') {
 
                             /*
-                             * İLK BACKEND RELEASE
+                             * İlk release:
                              *
-                             * Base = 0.0.0
+                             * base = 0.0.0
+                             *
+                             * patch -> 0.0.1
+                             * minor -> 0.1.0
+                             * major -> 1.0.0
                              */
-
                             if (versionType == 'major') {
+
                                 env.BACKEND_VERSION = '1.0.0'
+
                             } else if (versionType == 'minor') {
+
                                 env.BACKEND_VERSION = '0.1.0'
+
                             } else {
+
                                 env.BACKEND_VERSION = '0.0.1'
                             }
 
@@ -247,9 +294,11 @@ pipeline {
                                 )
                             }
 
+
                             int major = matcher[0][1] as int
                             int minor = matcher[0][2] as int
                             int patch = matcher[0][3] as int
+
 
                             if (versionType == 'major') {
 
@@ -267,34 +316,40 @@ pipeline {
                                 patch++
                             }
 
+
                             env.BACKEND_VERSION =
                                 "${major}.${minor}.${patch}"
                         }
+
 
                         env.BACKEND_TAG =
                             "backend/v${env.BACKEND_VERSION}-sha.${env.SHORT_SHA}"
                     }
 
 
-                    // ==========================
+                    // ========================================
                     // FRONTEND VERSION
-                    // ==========================
+                    // ========================================
 
-                    if (frontendChanged == 'true') {
+                    if (env.FRONTEND_CHANGED == 'true') {
 
                         if (env.FRONTEND_BASE_TAG == 'NONE') {
 
                             /*
-                             * İLK FRONTEND RELEASE
+                             * İlk release:
                              *
-                             * Base = 0.0.0
+                             * base = 0.0.0
                              */
-
                             if (versionType == 'major') {
+
                                 env.FRONTEND_VERSION = '1.0.0'
+
                             } else if (versionType == 'minor') {
+
                                 env.FRONTEND_VERSION = '0.1.0'
+
                             } else {
+
                                 env.FRONTEND_VERSION = '0.0.1'
                             }
 
@@ -312,9 +367,11 @@ pipeline {
                                 )
                             }
 
+
                             int major = matcher[0][1] as int
                             int minor = matcher[0][2] as int
                             int patch = matcher[0][3] as int
+
 
                             if (versionType == 'major') {
 
@@ -332,9 +389,11 @@ pipeline {
                                 patch++
                             }
 
+
                             env.FRONTEND_VERSION =
                                 "${major}.${minor}.${patch}"
                         }
+
 
                         env.FRONTEND_TAG =
                             "frontend/v${env.FRONTEND_VERSION}-sha.${env.SHORT_SHA}"
@@ -377,7 +436,7 @@ pipeline {
 
 
                         if (
-                            backendChanged == 'true' &&
+                            env.BACKEND_CHANGED == 'true' &&
                             env.BACKEND_SKIP != 'true'
                         ) {
 
@@ -396,7 +455,7 @@ pipeline {
 
 
                         if (
-                            frontendChanged == 'true' &&
+                            env.FRONTEND_CHANGED == 'true' &&
                             env.FRONTEND_SKIP != 'true'
                         ) {
 
@@ -423,7 +482,7 @@ pipeline {
                 script {
 
                     if (
-                        backendChanged == 'true' &&
+                        env.BACKEND_CHANGED == 'true' &&
                         env.BACKEND_SKIP != 'true'
                     ) {
 
@@ -446,7 +505,7 @@ pipeline {
 
 
                     if (
-                        frontendChanged == 'true' &&
+                        env.FRONTEND_CHANGED == 'true' &&
                         env.FRONTEND_SKIP != 'true'
                     ) {
 
@@ -476,7 +535,7 @@ pipeline {
                 script {
 
                     if (
-                        backendChanged == 'true' &&
+                        env.BACKEND_CHANGED == 'true' &&
                         env.BACKEND_SKIP != 'true'
                     ) {
 
@@ -497,7 +556,7 @@ pipeline {
 
 
                     if (
-                        frontendChanged == 'true' &&
+                        env.FRONTEND_CHANGED == 'true' &&
                         env.FRONTEND_SKIP != 'true'
                     ) {
 
@@ -532,7 +591,7 @@ pipeline {
                     ]) {
 
                         if (
-                            backendChanged == 'true' &&
+                            env.BACKEND_CHANGED == 'true' &&
                             env.BACKEND_SKIP != 'true'
                         ) {
 
@@ -557,7 +616,7 @@ pipeline {
 
 
                         if (
-                            frontendChanged == 'true' &&
+                            env.FRONTEND_CHANGED == 'true' &&
                             env.FRONTEND_SKIP != 'true'
                         ) {
 
@@ -603,21 +662,11 @@ pipeline {
  * ============================================================
  * FIND LATEST VALID RELEASE TAG
  * ============================================================
- *
- * Sonuç:
- *
- *   backend/frontend release varsa:
- *       backend/vX.Y.Z-sha.XXXXXXX
- *
- *   hiç release yoksa:
- *       NONE
- *
- * ÖNEMLİ:
- * NONE bir gerçek Git tag değildir.
- * Sadece pipeline içerisinde "ilk release" durumunu
- * açıkça temsil eder.
  */
-def findLatestValidTag(String component, String triggerSha) {
+def findLatestValidTag(
+    String component,
+    String triggerSha
+) {
 
     def tags = withEnv([
         "COMPONENT=${component}",
@@ -637,8 +686,6 @@ def findLatestValidTag(String component, String triggerSha) {
 
     /*
      * Hiç release yok.
-     *
-     * BURADA BAŞKA HİÇBİR KONTROL YOK.
      */
     if (!tags) {
         return 'NONE'
@@ -646,7 +693,8 @@ def findLatestValidTag(String component, String triggerSha) {
 
 
     /*
-     * En yeni tag'dan başlayarak geçerli olanı bul.
+     * En yeni tag'dan başlayarak
+     * tag formatını ve tag commit SHA'sını doğrula.
      */
     for (String tag : tags.split('\n')) {
 
@@ -668,9 +716,9 @@ def findLatestValidTag(String component, String triggerSha) {
 
 
         /*
-         * Tag isminde yazan SHA,
-         * tag'ın gösterdiği commit'in başıyla
-         * eşleşmeli.
+         * Tag isminde bulunan SHA,
+         * tag'ın işaret ettiği commit'in
+         * başlangıcıyla eşleşmeli.
          */
         if (
             tagCommit
@@ -683,9 +731,10 @@ def findLatestValidTag(String component, String triggerSha) {
 
 
     /*
-     * Tag bulundu ama geçerli release tag'ı bulunamadı.
+     * Formatı uygun tag bulundu ama
+     * geçerli release bulunamadı.
      *
-     * Bunu da ilk release kabul ediyoruz.
+     * Bu component için ilk release kabul edilir.
      */
     return 'NONE'
 }
@@ -696,10 +745,14 @@ def findLatestValidTag(String component, String triggerSha) {
  * PARSE TAG
  * ============================================================
  */
-def parseTag(String tag, String component) {
+def parseTag(
+    String tag,
+    String component
+) {
 
     def prefix = "${component}/v"
     def suffix = '-sha.'
+
 
     if (
         !tag.startsWith(prefix) ||
@@ -714,6 +767,7 @@ def parseTag(String tag, String component) {
     )
 
     def index = value.indexOf(suffix)
+
 
     if (index < 0) {
         error("Geçersiz tag: ${tag}")
@@ -763,7 +817,9 @@ def getTagCommit(String tag) {
         !tag ||
         tag == 'NONE'
     ) {
-        error("Commit alınacak geçerli tag yok: ${tag}")
+        error(
+            "Commit alınacak geçerli tag yok: ${tag}"
+        )
     }
 
 
@@ -790,10 +846,8 @@ def getTagCommit(String tag) {
  * GIT DIFF
  * ============================================================
  *
- * Bu fonksiyon SADECE daha önce release yapılmış
- * component'lerde kullanılır.
- *
- * İlk release'de BU FONKSİYON ÇAĞRILMAZ.
+ * SADECE daha önce release edilmiş
+ * component'lerde çağrılır.
  */
 def gitDiffExists(
     String oldCommit,
@@ -804,6 +858,14 @@ def gitDiffExists(
     if (!oldCommit) {
         error(
             "Diff için eski commit bulunamadı: " +
+            componentPath
+        )
+    }
+
+
+    if (!newCommit) {
+        error(
+            "Diff için yeni commit bulunamadı: " +
             componentPath
         )
     }
@@ -829,16 +891,14 @@ def gitDiffExists(
 
 
     /*
-     * git diff --quiet:
-     *
      * 0 = değişiklik yok
      * 1 = değişiklik var
-     * diğer = hata
+     * diğer = git hatası
      */
-
     if (result == 0) {
         return false
     }
+
 
     if (result == 1) {
         return true
@@ -865,7 +925,7 @@ def checkDockerImage(
 ) {
 
     /*
-     * GitHub'da bu release tag'ı var mı?
+     * GitHub'da release tag var mı?
      */
     def remoteTagOutput = withEnv([
         "TAG_TO_CHECK=${githubTag}"
@@ -892,6 +952,9 @@ def checkDockerImage(
 
     if (remoteTagOutput) {
 
+        /*
+         * Önce annotated tag'ın peeled commit'ini al.
+         */
         remoteTagCommit = withEnv([
             "REMOTE_TAG_OUTPUT=${remoteTagOutput}",
             "EXPECTED_TAG=${githubTag}"
@@ -912,6 +975,9 @@ def checkDockerImage(
         }
 
 
+        /*
+         * Peeled kayıt yoksa normal tag SHA'sını al.
+         */
         if (!remoteTagCommit) {
 
             remoteTagCommit = withEnv([
@@ -976,8 +1042,7 @@ def checkDockerImage(
 
 
     /*
-     * Ne Docker image var ne GitHub tag var:
-     *
+     * Hiçbir şey yok:
      * BUILD
      */
     if (
@@ -989,7 +1054,8 @@ def checkDockerImage(
 
 
     /*
-     * GitHub tag var ama Docker image yok.
+     * GitHub release var fakat Docker image yok.
+     * Tutarsız durum.
      */
     if (
         !versionExists &&
@@ -1062,6 +1128,9 @@ def checkDockerImage(
     }
 
 
+    /*
+     * Version ve SHA image aynı image'i gösteriyor mu?
+     */
     if (versionDigest != shaDigest) {
         error(
             "Digest uyuşmazlığı: " +
@@ -1072,7 +1141,7 @@ def checkDockerImage(
 
     /*
      * İkisi de mevcut ve aynı.
-     * Daha önce release yapılmış.
+     * GitHub tag da mevcutsa release zaten tamamlanmış.
      */
     if (remoteTagOutput) {
         return 'SKIP'
@@ -1081,6 +1150,7 @@ def checkDockerImage(
 
     /*
      * Docker image var ama GitHub tag yok.
+     * Tutarsız durum.
      */
     error(
         "Docker image var fakat GitHub tag yok: " +
