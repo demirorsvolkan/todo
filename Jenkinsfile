@@ -36,7 +36,6 @@ pipeline {
             }
         }
 
-
         stage('Validate Trigger') {
             steps {
                 script {
@@ -56,27 +55,22 @@ pipeline {
                         returnStatus: true
                     ) == 0
 
-
                     if (isTagBuild) {
                         currentBuild.result = 'NOT_BUILT'
                         error('Tag-triggered build ignored.')
                     }
-
 
                     env.TRIGGER_SHA = sh(
                         script: 'git rev-parse HEAD',
                         returnStdout: true
                     ).trim()
 
-
                     env.SHORT_SHA = env.TRIGGER_SHA.take(7)
-
 
                     env.COMMIT_MESSAGE = sh(
                         script: 'git log -1 --pretty=%B',
                         returnStdout: true
                     ).trim()
-
 
                     echo "Trigger SHA    : ${env.TRIGGER_SHA}"
                     echo "Short SHA      : ${env.SHORT_SHA}"
@@ -85,31 +79,24 @@ pipeline {
             }
         }
 
-
         stage('Detect Changes') {
             steps {
                 script {
 
-                    env.BACKEND_BASE_TAG =
-                        findLatestValidTag(
-                            'backend',
-                            env.TRIGGER_SHA
-                        )
+                    env.BACKEND_BASE_TAG = findLatestValidTag(
+                        'backend',
+                        env.TRIGGER_SHA
+                    )
 
+                    env.BACKEND_BASE_COMMIT = getTagCommit(
+                        env.BACKEND_BASE_TAG
+                    )
 
-                    env.BACKEND_BASE_COMMIT =
-                        getTagCommit(
-                            env.BACKEND_BASE_TAG
-                        )
-
-
-                    env.BACKEND_CHANGED =
-                        gitDiffExists(
-                            env.BACKEND_BASE_COMMIT,
-                            env.TRIGGER_SHA,
-                            'backend/'
-                        ) ? 'true' : 'false'
-
+                    env.BACKEND_CHANGED = gitDiffExists(
+                        env.BACKEND_BASE_COMMIT,
+                        env.TRIGGER_SHA,
+                        'backend/'
+                    ) ? 'true' : 'false'
 
                     echo """
                     ============================
@@ -122,27 +109,20 @@ pipeline {
                     Changed          : ${env.BACKEND_CHANGED}
                     """
 
+                    env.FRONTEND_BASE_TAG = findLatestValidTag(
+                        'frontend',
+                        env.TRIGGER_SHA
+                    )
 
-                    env.FRONTEND_BASE_TAG =
-                        findLatestValidTag(
-                            'frontend',
-                            env.TRIGGER_SHA
-                        )
+                    env.FRONTEND_BASE_COMMIT = getTagCommit(
+                        env.FRONTEND_BASE_TAG
+                    )
 
-
-                    env.FRONTEND_BASE_COMMIT =
-                        getTagCommit(
-                            env.FRONTEND_BASE_TAG
-                        )
-
-
-                    env.FRONTEND_CHANGED =
-                        gitDiffExists(
-                            env.FRONTEND_BASE_COMMIT,
-                            env.TRIGGER_SHA,
-                            'frontend/'
-                        ) ? 'true' : 'false'
-
+                    env.FRONTEND_CHANGED = gitDiffExists(
+                        env.FRONTEND_BASE_COMMIT,
+                        env.TRIGGER_SHA,
+                        'frontend/'
+                    ) ? 'true' : 'false'
 
                     echo """
                     ============================
@@ -155,12 +135,10 @@ pipeline {
                     Changed          : ${env.FRONTEND_CHANGED}
                     """
 
-
                     if (
                         env.BACKEND_CHANGED == 'false' &&
                         env.FRONTEND_CHANGED == 'false'
                     ) {
-
                         currentBuild.result = 'NOT_BUILT'
 
                         error(
@@ -171,13 +149,11 @@ pipeline {
             }
         }
 
-
         stage('Calculate Versions') {
             steps {
                 script {
 
                     def versionType = 'patch'
-
 
                     if (env.COMMIT_MESSAGE =~ /(?m)^feat!:/) {
                         versionType = 'major'
@@ -189,9 +165,7 @@ pipeline {
                         versionType = 'patch'
                     }
 
-
                     echo "Version değişikliği: ${versionType}"
-
 
                     if (env.BACKEND_CHANGED == 'true') {
 
@@ -200,18 +174,15 @@ pipeline {
                         def matcher = backendTag =~
                             /^backend\/v([0-9]+)\.([0-9]+)\.([0-9]+)-sha\.([0-9a-fA-F]+)$/
 
-
                         if (!matcher.matches()) {
                             error(
                                 "Geçersiz backend base tag formatı: ${backendTag}"
                             )
                         }
 
-
                         int major = matcher[0][1] as int
                         int minor = matcher[0][2] as int
                         int patch = matcher[0][3] as int
-
 
                         if (versionType == 'major') {
                             major++
@@ -226,14 +197,11 @@ pipeline {
                             patch++
                         }
 
-
                         env.BACKEND_VERSION =
                             "${major}.${minor}.${patch}"
 
-
                         env.BACKEND_TAG =
                             "backend/v${env.BACKEND_VERSION}-sha.${env.SHORT_SHA}"
-
 
                         echo """
                         BACKEND VERSION
@@ -244,7 +212,6 @@ pipeline {
                         """
                     }
 
-
                     if (env.FRONTEND_CHANGED == 'true') {
 
                         def frontendTag = env.FRONTEND_BASE_TAG
@@ -252,18 +219,15 @@ pipeline {
                         def matcher = frontendTag =~
                             /^frontend\/v([0-9]+)\.([0-9]+)\.([0-9]+)-sha\.([0-9a-fA-F]+)$/
 
-
                         if (!matcher.matches()) {
                             error(
                                 "Geçersiz frontend base tag formatı: ${frontendTag}"
                             )
                         }
 
-
                         int major = matcher[0][1] as int
                         int minor = matcher[0][2] as int
                         int patch = matcher[0][3] as int
-
 
                         if (versionType == 'major') {
                             major++
@@ -278,14 +242,11 @@ pipeline {
                             patch++
                         }
 
-
                         env.FRONTEND_VERSION =
                             "${major}.${minor}.${patch}"
 
-
                         env.FRONTEND_TAG =
                             "frontend/v${env.FRONTEND_VERSION}-sha.${env.SHORT_SHA}"
-
 
                         echo """
                         FRONTEND VERSION
@@ -298,7 +259,6 @@ pipeline {
                 }
             }
         }
-
 
         stage('Docker Hub Check') {
             steps {
@@ -326,7 +286,6 @@ pipeline {
                                     --password-stdin
                         '''
 
-
                         if (
                             env.BACKEND_CHANGED == 'true' &&
                             env.BACKEND_SKIP != 'true'
@@ -340,12 +299,10 @@ pipeline {
                                 env.TRIGGER_SHA
                             )
 
-
                             if (result == 'SKIP') {
                                 env.BACKEND_SKIP = 'true'
                             }
                         }
-
 
                         if (
                             env.FRONTEND_CHANGED == 'true' &&
@@ -360,12 +317,10 @@ pipeline {
                                 env.TRIGGER_SHA
                             )
 
-
                             if (result == 'SKIP') {
                                 env.FRONTEND_SKIP = 'true'
                             }
                         }
-
 
                         echo "Backend skip : ${env.BACKEND_SKIP}"
                         echo "Frontend skip: ${env.FRONTEND_SKIP}"
@@ -373,7 +328,6 @@ pipeline {
                 }
             }
         }
-
 
         stage('Build Images') {
             steps {
@@ -394,7 +348,6 @@ pipeline {
                         """
                     }
 
-
                     if (
                         env.FRONTEND_CHANGED == 'true' &&
                         env.FRONTEND_SKIP != 'true'
@@ -412,7 +365,6 @@ pipeline {
                 }
             }
         }
-
 
         stage('Push Images') {
             steps {
@@ -434,7 +386,6 @@ pipeline {
                         """
                     }
 
-
                     if (
                         env.FRONTEND_CHANGED == 'true' &&
                         env.FRONTEND_SKIP != 'true'
@@ -453,7 +404,6 @@ pipeline {
                 }
             }
         }
-
 
         stage('Create GitHub Tags') {
             steps {
@@ -485,7 +435,6 @@ pipeline {
                             '''
                         }
 
-
                         if (
                             env.FRONTEND_CHANGED == 'true' &&
                             env.FRONTEND_SKIP != 'true'
@@ -509,7 +458,6 @@ pipeline {
             }
         }
     }
-
 
     post {
 
@@ -535,13 +483,13 @@ def findLatestValidTag(
 ) {
 
     /*
-     * Regex'i Groovy dışında, shell değişkeni üzerinden oluşturuyoruz.
+     * Regex doğrudan Groovy string olarak shell'e gönderilmiyor.
      *
-     * Böylece \$ problemi yaşamıyoruz.
+     * Burada $ karakteri kullanmıyoruz.
+     * grep için sadece başlangıç ve içerik pattern'i yeterli.
      */
     def tagPattern =
-        "^${component}/v[0-9]+\\.[0-9]+\\.[0-9]+-sha\\.[0-9a-fA-F]+\$"
-
+        "^${component}/v[0-9]+\\.[0-9]+\\.[0-9]+-sha\\.[0-9a-fA-F]+"
 
     def tags = sh(
         script: """
@@ -553,7 +501,6 @@ def findLatestValidTag(
         """,
         returnStdout: true
     ).trim()
-
 
     if (!tags) {
 
@@ -567,7 +514,6 @@ def findLatestValidTag(
         return "${component}/v0.0.0-sha.0000000"
     }
 
-
     for (String tag : tags.split('\n')) {
 
         tag = tag.trim()
@@ -576,23 +522,18 @@ def findLatestValidTag(
             continue
         }
 
-
         def matcher = tag =~
             /^${component}\/v([0-9]+)\.([0-9]+)\.([0-9]+)-sha\.([0-9a-fA-F]+)$/
-
 
         if (!matcher.matches()) {
             continue
         }
 
-
         def tagSha =
             matcher[0][4].toLowerCase()
 
-
         def tagCommit =
             getTagCommit(tag)
-
 
         if (
             !tagCommit
@@ -611,7 +552,6 @@ def findLatestValidTag(
             continue
         }
 
-
         echo """
         Geçerli ${component} release tag bulundu.
 
@@ -620,10 +560,8 @@ def findLatestValidTag(
         Tag SHA    : ${tagSha}
         """
 
-
         return tag
     }
-
 
     echo """
     ${component} için SHA doğrulamasından geçen
@@ -631,7 +569,6 @@ def findLatestValidTag(
 
     İlk release kabul edilecek.
     """
-
 
     return "${component}/v0.0.0-sha.0000000"
 }
@@ -647,7 +584,6 @@ def getTagCommit(String tag) {
     if (tag.endsWith('/v0.0.0-sha.0000000')) {
         return '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
     }
-
 
     return sh(
         script: """
@@ -682,16 +618,13 @@ def gitDiffExists(
         returnStatus: true
     )
 
-
     if (result == 0) {
         return false
     }
 
-
     if (result == 1) {
         return true
     }
-
 
     error("""
     Git diff sırasında hata oluştu.
@@ -724,16 +657,16 @@ def checkDockerImage(
      * GITHUB TAG KONTROLÜ
      * --------------------------------------------------------------
      *
-     * ÖNEMLİ:
+     * Burada özellikle ''' kullanıyoruz.
      *
-     * Burada triple-single-quote kullanıyoruz.
+     * Groovy interpolation YOK.
      *
-     * Böylece Groovy:
+     * Dolayısıyla:
      *
-     *     $GITHUB_TOKEN
-     *     $GITHUB_TAG
+     * $GITHUB_TOKEN
+     * $GITHUB_TAG
      *
-     * ifadelerine dokunmuyor.
+     * gibi shell değişkenleri Groovy tarafından parse edilmiyor.
      */
     def remoteTagOutput = sh(
         script: '''
@@ -759,9 +692,9 @@ def checkDockerImage(
          * ANNOTATED TAG
          * ----------------------------------------------------------
          *
-         * Groovy interpolation YOK.
+         * remoteTagOutput'u doğrudan Groovy string içine koymuyoruz.
          *
-         * Değerleri environment üzerinden awk'a veriyoruz.
+         * withEnv ile shell environment'ına gönderiyoruz.
          */
         withEnv([
             "REMOTE_TAG_OUTPUT=${remoteTagOutput}",
@@ -770,6 +703,8 @@ def checkDockerImage(
 
             remoteTagCommit = sh(
                 script: '''
+                    set -e
+
                     printf '%s\n' "$REMOTE_TAG_OUTPUT" |
                     awk -v tag="$EXPECTED_GITHUB_TAG" \
                         '$2 == "refs/tags/" tag "^{}" {print $1; exit}'
@@ -793,6 +728,8 @@ def checkDockerImage(
 
                 remoteTagCommit = sh(
                     script: '''
+                        set -e
+
                         printf '%s\n' "$REMOTE_TAG_OUTPUT" |
                         awk -v tag="$EXPECTED_GITHUB_TAG" \
                             '$2 == "refs/tags/" tag {print $1; exit}'
@@ -907,6 +844,8 @@ def checkDockerImage(
      */
     def versionDigest = sh(
         script: """
+            set -e
+
             docker buildx imagetools inspect \
                 ${image}:v${version} |
             grep -m 1 '^Digest:' |
@@ -934,6 +873,8 @@ def checkDockerImage(
      */
     def shaDigest = sh(
         script: """
+            set -e
+
             docker buildx imagetools inspect \
                 ${image}:sha-${sha} 2>/dev/null |
             grep -m 1 '^Digest:' |
