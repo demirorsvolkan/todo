@@ -301,34 +301,43 @@ pipeline {
 
 
 
-        stage('08 - Create Local Git Test Tag') {
+        stage('08 - CREATE LOCAL TAG') {
             steps {
                 echo '========== TEST 08 - CREATE LOCAL TAG =========='
 
                 sh '''
                     set -eu
 
+                    SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+                    TEST_TAG="jenkins-test/${BUILD_NUMBER}-${SHORT_SHA}"
+
                     echo "Local test tag oluşturuluyor..."
+                    echo "Tag: $TEST_TAG"
+                    echo "Commit: $(git rev-parse HEAD)"
 
-                    git tag -a \
-                        "$TEST_GITHUB_TAG" \
-                        "$TEST_SHA" \
-                        -m "Jenkins integration test $TEST_ID"
+                    # Sadece bu Jenkins workspace/repository için identity.
+                    # Global Jenkins ayarını değiştirmiyoruz.
+                    git config user.name "Jenkins"
+                    git config user.email "jenkins@localhost"
 
-                    echo
-                    echo "Local tag:"
-                    git show-ref --tags "$TEST_GITHUB_TAG"
-
-                    echo
-                    echo "Tag commit:"
-                    git rev-list -n 1 "$TEST_GITHUB_TAG"
+                    git tag -a "$TEST_TAG" \
+                        "$(git rev-parse HEAD)" \
+                        -m "Jenkins integration test ${BUILD_NUMBER}-${SHORT_SHA}"
 
                     echo
-                    echo "Beklenen commit:"
-                    echo "$TEST_SHA"
+                    echo "Oluşturulan local tag:"
+                    git show-ref --tags "$TEST_TAG"
+
+                    echo
+                    echo "Tag commit'i:"
+                    git rev-list -n 1 "$TEST_TAG"
+
+                    echo
+                    echo "Local tag oluşturma OK."
                 '''
             }
         }
+
 
 
         stage('09 - Push GitHub Test Tag') {
