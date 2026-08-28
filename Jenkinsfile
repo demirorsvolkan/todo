@@ -662,6 +662,89 @@ stage('12C - Docker Hub Frontend Test Tag Query') {
     }
 }
 
+stage('12D - Docker Hub Test Tag DELETE') {
+    steps {
+        echo '========== DOCKER HUB TEST TAG DELETE =========='
+
+        withCredentials([
+            usernamePassword(
+                credentialsId: 'dockerhub-credentials',
+                usernameVariable: 'DOCKER_USERNAME',
+                passwordVariable: 'DOCKER_PASSWORD'
+            )
+        ]) {
+            sh '''
+                set -eu
+                set +x
+
+                echo "Backend test tag siliniyor..."
+                echo "Tag: $TEST_BACKEND_TAG"
+
+                HTTP_CODE=$(
+                    curl \
+                        -sS \
+                        -o /tmp/backend-delete.json \
+                        -w "%{http_code}" \
+                        -X DELETE \
+                        -u "${DOCKER_USERNAME}:${DOCKER_PASSWORD}" \
+                        "https://hub.docker.com/v2/repositories/${BACKEND_IMAGE}/tags/${TEST_BACKEND_TAG}/"
+                )
+
+                echo
+                echo "Backend DELETE HTTP status: $HTTP_CODE"
+
+                if [ -s /tmp/backend-delete.json ]; then
+                    cat /tmp/backend-delete.json
+                fi
+
+                if [ "$HTTP_CODE" != "204" ]; then
+                    echo
+                    echo "HATA: Backend test tag SİLİNEMEDİ."
+                    exit 1
+                fi
+
+                echo
+                echo "Backend test tag SILINDI."
+
+
+                echo
+                echo "Frontend test tag siliniyor..."
+                echo "Tag: $TEST_FRONTEND_TAG"
+
+                HTTP_CODE=$(
+                    curl \
+                        -sS \
+                        -o /tmp/frontend-delete.json \
+                        -w "%{http_code}" \
+                        -X DELETE \
+                        -u "${DOCKER_USERNAME}:${DOCKER_PASSWORD}" \
+                        "https://hub.docker.com/v2/repositories/${FRONTEND_IMAGE}/tags/${TEST_FRONTEND_TAG}/"
+                )
+
+                echo
+                echo "Frontend DELETE HTTP status: $HTTP_CODE"
+
+                if [ -s /tmp/frontend-delete.json ]; then
+                    cat /tmp/frontend-delete.json
+                fi
+
+                if [ "$HTTP_CODE" != "204" ]; then
+                    echo
+                    echo "HATA: Frontend test tag SİLİNEMEDİ."
+                    exit 1
+                fi
+
+                echo
+                echo "Frontend test tag SILINDI."
+
+                echo
+                echo "========================================"
+                echo "DOCKER HUB TEST TAG DELETE OK"
+                echo "========================================"
+            '''
+        }
+    }
+}
 
 
 
