@@ -154,10 +154,9 @@ pipeline {
                 echo '========== TEST 04 - GITHUB BRANCH QUERY =========='
 
                 withCredentials([
-                    usernamePassword(
-                        credentialsId: 'github-git-credentials',
-                        usernameVariable: 'GIT_USERNAME',
-                        passwordVariable: 'GIT_TOKEN'
+                    string(
+                        credentialsId: 'github-token',
+                        variable: 'GITHUB_TOKEN'
                     )
                 ]) {
                     sh '''
@@ -166,10 +165,8 @@ pipeline {
 
                         echo "main branch sorgulanıyor..."
 
-                        git config --global credential.helper ""
-
                         git \
-                            -c credential.helper="!f() { echo username=$GIT_USERNAME; echo password=$GIT_TOKEN; }; f" \
+                            -c credential.helper="!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f" \
                             ls-remote \
                             --heads \
                             https://github.com/demirorsvolkan/todo.git \
@@ -181,6 +178,7 @@ pipeline {
                 }
             }
         }
+
 
 
 
