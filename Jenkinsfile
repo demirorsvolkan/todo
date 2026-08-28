@@ -1,1230 +1,631 @@
 pipeline {
-
     agent any
 
     options {
         disableConcurrentBuilds()
-        timestamps()
-        skipDefaultCheckout(true)
+        skipDefaultCheckout(false)
     }
 
     environment {
-        GITHUB_REPO = 'demirorsvolkan/todo'
+        BACKEND_DIR = 'backend'
+        FRONTEND_DIR = 'frontend'
 
-        DOCKER_USER = 'volkandemirors'
+        // Jenkins Credentials
+        GITHUB_CREDENTIALS = 'github-credentials'
+        DOCKER_CREDENTIALS = 'dockerhub-credentials'
 
-        BACKEND_REPO  = 'volkandemirors/todo-backend'
-        FRONTEND_REPO = 'volkandemirors/todo-frontend'
-
-        GITHUB_API = 'https://api.github.com'
+        // Docker Hub repository
+        DOCKERHUB_REPO = 'YOUR_DOCKERHUB_USERNAME/YOUR_REPOSITORY'
     }
 
     stages {
 
         // ============================================================
-        // 01 - CHECKOUT
+        // 01 - Checkout
         // ============================================================
-
         stage('01 - Checkout') {
             steps {
-                echo '========== 01 - CHECKOUT =========='
-
                 checkout scm
 
                 sh '''
-                    set -eu
-
-                    echo "Commit:"
-                    git rev-parse HEAD
-
-                    echo
-                    echo "Commit message:"
-                    git log -1 --pretty=%B
-
-                    echo
-                    echo "Fetching all branches and tags..."
-
-                    git fetch --force origin '+refs/heads/*:refs/remotes/origin/*'
-                    git fetch --tags --force origin
+                    git fetch --all --tags --prune
                 '''
             }
         }
 
-
         // ============================================================
-        // 02 - DETERMINE CURRENT COMMIT
+        // 02 - Current Commit
         // ============================================================
-
         stage('02 - Current Commit') {
             steps {
                 script {
-
                     env.CURRENT_SHA = sh(
                         script: 'git rev-parse HEAD',
                         returnStdout: true
                     ).trim()
 
-                    env.SHORT_SHA = sh(
+                    env.CURRENT_SHORT_SHA = sh(
                         script: 'git rev-parse --short=7 HEAD',
                         returnStdout: true
                     ).trim()
 
-                    echo '========== CURRENT COMMIT =========='
-                    echo "Current SHA : ${env.CURRENT_SHA}"
-                    echo "Short SHA   : ${env.SHORT_SHA}"
+                    echo """
+========== CURRENT COMMIT ==========
+Current SHA : ${env.CURRENT_SHA}
+Short SHA   : ${env.CURRENT_SHORT_SHA}
+"""
                 }
             }
         }
 
-
         // ============================================================
-        // 03 - GITHUB AUTHENTICATION
+        // 03 - GitHub Authentication
         // ============================================================
-
         stage('03 - GitHub Authentication') {
             steps {
-
-                echo '========== 03 - GITHUB AUTHENTICATION =========='
-
                 withCredentials([
-                    string(
-                        credentialsId: 'GITHUB_TOKEN',
-                        variable: 'GITHUB_TOKEN'
+                    usernamePassword(
+                        credentialsId: env.GITHUB_CREDENTIALS,
+                        usernameVariable: 'GITHUB_USER',
+                        passwordVariable: 'GITHUB_TOKEN'
                     )
                 ]) {
-
                     sh '''
-                        set -eu
-                        set +x
+                        git config user.name "$GITHUB_USER"
+                        git config user.email "$GITHUB_USER@users.noreply.github.com"
 
-                        STATUS=$(curl -sS \
-                            -o /tmp/github-user.json \
-                            -w "%{http_code}" \
-                            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                            -H "Accept: application/vnd.github+json" \
-                            "${GITHUB_API}/user")
-
-                        echo "GitHub HTTP status: ${STATUS}"
-
-                        test "${STATUS}" = "200"
-
-                        echo "GitHub authentication OK."
+                        git remote set-url origin \
+                          "https://${GITHUB_USER}:${GITHUB_TOKEN}@$(git remote get-url origin | sed -E 's#https://##' | sed 's#^[^/]*/##')"
                     '''
                 }
             }
         }
 
-
         // ============================================================
-        // 04 - FIND LAST BACKEND RELEASE
+        // 04 - Find Last Backend / Frontend Version
         // ============================================================
-
-        stage('04 - Find Last Backend Release') {
+        stage('04 - Find Last Component Versions') {
             steps {
+                script {
 
-                echo '========== 04 - LAST BACKEND RELEASE =========='
+                    /*
+                     * SADECE bizim formatımızdaki tag'lar alınır.
+                     *
+                     * backend/v1.2.4-sha.a1b2c3d
+                     * frontend/v1.3.0-sha.f91e82a
+                     */
 
-                withCredentials([
-                    string(
-                        credentialsId: 'GITHUB_TOKEN',
-                        variable: 'GITHUB_TOKEN'
-                    )
-                ]) {
+                    env.LAST_BACKEND_TAG = sh(
+                        script: '''
+                            git tag -l 'backend/v*' |
+                            grep -E '^backend/v[0-9]+\\.[0-9]+\\.[0-9]+-sha\\.[0-9a-fA-F]+$' |
+                            sort -V |
+                            tail -n 1 || true
+                        ''',
+                        returnStdout: true
+                    ).trim()
 
-                    script {
+                    env.LAST_FRONTEND_TAG = sh(
+                        script: '''
+                            git tag -l 'frontend/v*' |
+                            grep -E '^frontend/v[0-9]+\\.[0-9]+\\.[0-9]+-sha\\.[0-9a-fA-F]+$' |
+                            sort -V |
+                            tail -n 1 || true
+                        ''',
+                        returnStdout: true
+                    ).trim()
 
-                        def result = sh(
+                    echo """
+========== LAST COMPONENT TAGS ==========
+Last Backend Tag  : ${env.LAST_BACKEND_TAG ?: 'NONE'}
+Last Frontend Tag : ${env.LAST_FRONTEND_TAG ?: 'NONE'}
+"""
+                }
+            }
+        }
+
+        // ============================================================
+        // 05 - Detect Backend Changes
+        // ============================================================
+        stage('05 - Detect Backend Changes') {
+            steps {
+                script {
+
+                    if (!env.LAST_BACKEND_TAG) {
+
+                        echo 'No previous backend version found.'
+
+                        /*
+                         * İlk backend versiyonu.
+                         * Backend klasöründe dosya varsa build edilir.
+                         */
+                        def backendFiles = sh(
                             script: '''
-                                set -eu
-                                set +x
-
-                                curl -fsSL \
-                                    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                                    -H "Accept: application/vnd.github+json" \
-                                    "${GITHUB_API}/repos/${GITHUB_REPO}/git/matching-refs/tags/backend/" \
-                                    > /tmp/backend-tags.json
-
-                                python3 - <<'PY'
-import json
-import re
-
-with open("/tmp/backend-tags.json") as f:
-    data = json.load(f)
-
-pattern = re.compile(
-    r'^refs/tags/backend/v([0-9]+)\\.([0-9]+)\\.([0-9]+)-sha\\.([0-9a-fA-F]+)$'
-)
-
-versions = []
-
-for item in data:
-    ref = item.get("ref", "")
-    m = pattern.match(ref)
-
-    if m:
-        major = int(m.group(1))
-        minor = int(m.group(2))
-        patch = int(m.group(3))
-        sha = m.group(4)
-
-        versions.append(
-            (major, minor, patch, sha, ref)
-        )
-
-if not versions:
-    print("NONE")
-else:
-    versions.sort(
-        key=lambda x: (x[0], x[1], x[2]),
-        reverse=True
-    )
-
-    major, minor, patch, sha, ref = versions[0]
-
-    print(f"{major}.{minor}.{patch}|{sha}|{ref}")
-PY
+                                git ls-tree -r --name-only HEAD -- backend/ |
+                                grep -v '^$' || true
                             ''',
                             returnStdout: true
                         ).trim()
 
-                        env.BACKEND_LAST_RELEASE = result
+                        env.BACKEND_CHANGED =
+                            backendFiles ? 'true' : 'false'
 
-                        echo "Backend last release: ${result}"
+                        env.BACKEND_BASE_COMMIT = ''
+
+                    } else {
+
+                        /*
+                         * ÇOK ÖNEMLİ:
+                         *
+                         * Önceki commit değil,
+                         * son backend version tag'ının GERÇEK TARGET COMMIT'i
+                         * başlangıç noktasıdır.
+                         */
+                        env.BACKEND_BASE_COMMIT = sh(
+                            script: "git rev-list -n 1 '${env.LAST_BACKEND_TAG}'",
+                            returnStdout: true
+                        ).trim()
+
+                        def changed = sh(
+                            script: """
+                                git diff --name-only \
+                                '${env.BACKEND_BASE_COMMIT}' \
+                                '${env.CURRENT_SHA}' \
+                                -- '${env.BACKEND_DIR}/'
+                            """,
+                            returnStdout: true
+                        ).trim()
+
+                        env.BACKEND_CHANGED =
+                            changed ? 'true' : 'false'
+
+                        echo """
+========== BACKEND CHANGE CHECK ==========
+Previous Tag    : ${env.LAST_BACKEND_TAG}
+Previous Commit : ${env.BACKEND_BASE_COMMIT}
+Current Commit  : ${env.CURRENT_SHA}
+
+Changed Files:
+${changed ?: 'NONE'}
+
+Backend Changed: ${env.BACKEND_CHANGED}
+"""
                     }
                 }
             }
         }
 
-
         // ============================================================
-        // 05 - FIND LAST FRONTEND RELEASE
+        // 06 - Detect Frontend Changes
         // ============================================================
-
-        stage('05 - Find Last Frontend Release') {
+        stage('06 - Detect Frontend Changes') {
             steps {
+                script {
 
-                echo '========== 05 - LAST FRONTEND RELEASE =========='
+                    if (!env.LAST_FRONTEND_TAG) {
 
-                withCredentials([
-                    string(
-                        credentialsId: 'GITHUB_TOKEN',
-                        variable: 'GITHUB_TOKEN'
-                    )
-                ]) {
+                        echo 'No previous frontend version found.'
 
-                    script {
-
-                        def result = sh(
+                        def frontendFiles = sh(
                             script: '''
-                                set -eu
-                                set +x
-
-                                curl -fsSL \
-                                    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                                    -H "Accept: application/vnd.github+json" \
-                                    "${GITHUB_API}/repos/${GITHUB_REPO}/git/matching-refs/tags/frontend/" \
-                                    > /tmp/frontend-tags.json
-
-                                python3 - <<'PY'
-import json
-import re
-
-with open("/tmp/frontend-tags.json") as f:
-    data = json.load(f)
-
-pattern = re.compile(
-    r'^refs/tags/frontend/v([0-9]+)\\.([0-9]+)\\.([0-9]+)-sha\\.([0-9a-fA-F]+)$'
-)
-
-versions = []
-
-for item in data:
-    ref = item.get("ref", "")
-    m = pattern.match(ref)
-
-    if m:
-        major = int(m.group(1))
-        minor = int(m.group(2))
-        patch = int(m.group(3))
-        sha = m.group(4)
-
-        versions.append(
-            (major, minor, patch, sha, ref)
-        )
-
-if not versions:
-    print("NONE")
-else:
-    versions.sort(
-        key=lambda x: (x[0], x[1], x[2]),
-        reverse=True
-    )
-
-    major, minor, patch, sha, ref = versions[0]
-
-    print(f"{major}.{minor}.{patch}|{sha}|{ref}")
-PY
+                                git ls-tree -r --name-only HEAD -- frontend/ |
+                                grep -v '^$' || true
                             ''',
                             returnStdout: true
                         ).trim()
 
-                        env.FRONTEND_LAST_RELEASE = result
+                        env.FRONTEND_CHANGED =
+                            frontendFiles ? 'true' : 'false'
 
-                        echo "Frontend last release: ${result}"
-                    }
-                }
-            }
-        }
+                        env.FRONTEND_BASE_COMMIT = ''
 
-
-        // ============================================================
-        // 06 - RESOLVE RELEASE COMMITS
-        // ============================================================
-
-        stage('06 - Resolve Release Commits') {
-            steps {
-
-                echo '========== 06 - RESOLVE RELEASE COMMITS =========='
-
-                script {
-
-                    def backend = env.BACKEND_LAST_RELEASE
-                    def frontend = env.FRONTEND_LAST_RELEASE
-
-                    if (backend == 'NONE') {
-                        env.BACKEND_BASE_SHA = ''
-                        echo 'No previous backend release.'
                     } else {
 
-                        def backendSha = backend.split('\\|')[1]
-
-                        env.BACKEND_BASE_SHA = sh(
-                            script: """
-                                set -eu
-
-                                git rev-parse \
-                                    --verify \
-                                    refs/tags/backend/v${backend.split('\\|')[0]}-sha.${backendSha}^{commit}
-                            """,
+                        env.FRONTEND_BASE_COMMIT = sh(
+                            script: "git rev-list -n 1 '${env.LAST_FRONTEND_TAG}'",
                             returnStdout: true
                         ).trim()
-
-                        echo "Backend release commit: ${env.BACKEND_BASE_SHA}"
-                    }
-
-                    if (frontend == 'NONE') {
-                        env.FRONTEND_BASE_SHA = ''
-                        echo 'No previous frontend release.'
-                    } else {
-
-                        def frontendSha = frontend.split('\\|')[1]
-
-                        env.FRONTEND_BASE_SHA = sh(
-                            script: """
-                                set -eu
-
-                                git rev-parse \
-                                    --verify \
-                                    refs/tags/frontend/v${frontend.split('\\|')[0]}-sha.${frontendSha}^{commit}
-                            """,
-                            returnStdout: true
-                        ).trim()
-
-                        echo "Frontend release commit: ${env.FRONTEND_BASE_SHA}"
-                    }
-                }
-            }
-        }
-
-
-        // ============================================================
-        // 07 - DETECT BACKEND CHANGES
-        // ============================================================
-
-        stage('07 - Detect Backend Changes') {
-            steps {
-
-                echo '========== 07 - BACKEND CHANGE DETECTION =========='
-
-                script {
-
-                    if (!env.BACKEND_BASE_SHA?.trim()) {
-
-                        echo 'No previous backend release.'
-                        echo 'Backend will be treated as changed.'
-
-                        env.BACKEND_CHANGED = 'true'
-
-                    } else {
 
                         def changed = sh(
                             script: """
-                                set -eu
-
                                 git diff --name-only \
-                                    ${env.BACKEND_BASE_SHA} \
-                                    ${env.CURRENT_SHA} \
-                                    -- backend/
+                                '${env.FRONTEND_BASE_COMMIT}' \
+                                '${env.CURRENT_SHA}' \
+                                -- '${env.FRONTEND_DIR}/'
                             """,
                             returnStdout: true
                         ).trim()
 
-                        if (changed) {
+                        env.FRONTEND_CHANGED =
+                            changed ? 'true' : 'false'
 
-                            env.BACKEND_CHANGED = 'true'
+                        echo """
+========== FRONTEND CHANGE CHECK ==========
+Previous Tag    : ${env.LAST_FRONTEND_TAG}
+Previous Commit : ${env.FRONTEND_BASE_COMMIT}
+Current Commit  : ${env.CURRENT_SHA}
 
-                            echo 'Backend changed: YES'
-                            echo
-                            echo changed
+Changed Files:
+${changed ?: 'NONE'}
 
-                        } else {
-
-                            env.BACKEND_CHANGED = 'false'
-
-                            echo 'Backend changed: NO'
-                        }
+Frontend Changed: ${env.FRONTEND_CHANGED}
+"""
                     }
                 }
             }
         }
 
-
         // ============================================================
-        // 08 - DETECT FRONTEND CHANGES
+        // 07 - Calculate Versions
         // ============================================================
-
-        stage('08 - Detect Frontend Changes') {
+        stage('07 - Calculate Versions') {
             steps {
-
-                echo '========== 08 - FRONTEND CHANGE DETECTION =========='
-
                 script {
-
-                    if (!env.FRONTEND_BASE_SHA?.trim()) {
-
-                        echo 'No previous frontend release.'
-                        echo 'Frontend will be treated as changed.'
-
-                        env.FRONTEND_CHANGED = 'true'
-
-                    } else {
-
-                        def changed = sh(
-                            script: """
-                                set -eu
-
-                                git diff --name-only \
-                                    ${env.FRONTEND_BASE_SHA} \
-                                    ${env.CURRENT_SHA} \
-                                    -- frontend/
-                            """,
-                            returnStdout: true
-                        ).trim()
-
-                        if (changed) {
-
-                            env.FRONTEND_CHANGED = 'true'
-
-                            echo 'Frontend changed: YES'
-                            echo
-                            echo changed
-
-                        } else {
-
-                            env.FRONTEND_CHANGED = 'false'
-
-                            echo 'Frontend changed: NO'
-                        }
-                    }
-                }
-            }
-        }
-
-
-        // ============================================================
-        // 09 - CALCULATE VERSIONS
-        // ============================================================
-
-        stage('09 - Calculate Versions') {
-            steps {
-
-                echo '========== 09 - CALCULATE VERSIONS =========='
-
-                script {
-
-                    // ---------------- BACKEND ----------------
 
                     if (env.BACKEND_CHANGED == 'true') {
 
-                        if (env.BACKEND_LAST_RELEASE == 'NONE') {
+                        if (env.LAST_BACKEND_TAG) {
 
-                            env.BACKEND_VERSION = 'v1.0.0'
+                            def matcher = (
+                                env.LAST_BACKEND_TAG =~
+                                /^backend\/v([0-9]+)\.([0-9]+)\.([0-9]+)-sha\.[0-9a-fA-F]+$/
+                            )
 
-                        } else {
+                            if (!matcher.matches()) {
+                                error(
+                                    "Invalid backend tag: ${env.LAST_BACKEND_TAG}"
+                                )
+                            }
 
-                            def parts =
-                                env.BACKEND_LAST_RELEASE.split('\\|')[0].split('\\.')
-
-                            int major = parts[0] as int
-                            int minor = parts[1] as int
-                            int patch = parts[2] as int
+                            def major = matcher[0][1].toInteger()
+                            def minor = matcher[0][2].toInteger()
+                            def patch = matcher[0][3].toInteger()
 
                             patch++
 
                             env.BACKEND_VERSION =
                                 "v${major}.${minor}.${patch}"
+
+                        } else {
+                            env.BACKEND_VERSION = 'v1.0.0'
                         }
 
-                        env.BACKEND_GITHUB_TAG =
-                            "backend/${env.BACKEND_VERSION}-sha.${env.SHORT_SHA}"
+                        env.BACKEND_TAG =
+                            "backend/${env.BACKEND_VERSION}-sha.${env.CURRENT_SHORT_SHA}"
 
-                        env.BACKEND_DOCKER_VERSION_TAG =
-                            env.BACKEND_VERSION
-
-                        env.BACKEND_DOCKER_SHA_TAG =
-                            env.SHORT_SHA
                     }
-
-
-                    // ---------------- FRONTEND ----------------
 
                     if (env.FRONTEND_CHANGED == 'true') {
 
-                        if (env.FRONTEND_LAST_RELEASE == 'NONE') {
+                        if (env.LAST_FRONTEND_TAG) {
 
-                            env.FRONTEND_VERSION = 'v1.0.0'
+                            def matcher = (
+                                env.LAST_FRONTEND_TAG =~
+                                /^frontend\/v([0-9]+)\.([0-9]+)\.([0-9]+)-sha\.[0-9a-fA-F]+$/
+                            )
 
-                        } else {
+                            if (!matcher.matches()) {
+                                error(
+                                    "Invalid frontend tag: ${env.LAST_FRONTEND_TAG}"
+                                )
+                            }
 
-                            def parts =
-                                env.FRONTEND_LAST_RELEASE.split('\\|')[0].split('\\.')
-
-                            int major = parts[0] as int
-                            int minor = parts[1] as int
-                            int patch = parts[2] as int
+                            def major = matcher[0][1].toInteger()
+                            def minor = matcher[0][2].toInteger()
+                            def patch = matcher[0][3].toInteger()
 
                             patch++
 
                             env.FRONTEND_VERSION =
                                 "v${major}.${minor}.${patch}"
+
+                        } else {
+                            env.FRONTEND_VERSION = 'v1.0.0'
                         }
 
-                        env.FRONTEND_GITHUB_TAG =
-                            "frontend/${env.FRONTEND_VERSION}-sha.${env.SHORT_SHA}"
-
-                        env.FRONTEND_DOCKER_VERSION_TAG =
-                            env.FRONTEND_VERSION
-
-                        env.FRONTEND_DOCKER_SHA_TAG =
-                            env.SHORT_SHA
+                        env.FRONTEND_TAG =
+                            "frontend/${env.FRONTEND_VERSION}-sha.${env.CURRENT_SHORT_SHA}"
                     }
 
+                    echo """
+========== VERSION RESULT ==========
+Backend Changed  : ${env.BACKEND_CHANGED}
+Backend Version  : ${env.BACKEND_VERSION ?: 'NONE'}
+Backend Tag      : ${env.BACKEND_TAG ?: 'NONE'}
 
-                    echo '----------------------------------------'
-                    echo "Current commit: ${env.CURRENT_SHA}"
-                    echo "Short SHA     : ${env.SHORT_SHA}"
-                    echo '----------------------------------------'
+Frontend Changed : ${env.FRONTEND_CHANGED}
+Frontend Version : ${env.FRONTEND_VERSION ?: 'NONE'}
+Frontend Tag     : ${env.FRONTEND_TAG ?: 'NONE'}
+"""
+                }
+            }
+        }
 
-                    echo "Backend changed : ${env.BACKEND_CHANGED}"
-                    echo "Frontend changed: ${env.FRONTEND_CHANGED}"
+        // ============================================================
+        // 08 - Docker Hub Validation
+        // ============================================================
+        stage('08 - Docker Hub Validation') {
+            steps {
+                script {
+
+                    /*
+                     * Burada Docker Hub'daki image metadata'sını
+                     * kontrol ediyoruz.
+                     *
+                     * Amaç:
+                     *
+                     * v1.2.5 -> başka SHA ile daha önce kullanılmışsa FAIL
+                     *
+                     * Aynı version + aynı SHA ise:
+                     * tekrar build/push yapma.
+                     */
+
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: env.DOCKER_CREDENTIALS,
+                            usernameVariable: 'DOCKER_USER',
+                            passwordVariable: 'DOCKER_PASSWORD'
+                        )
+                    ]) {
+
+                        sh '''
+                            echo "$DOCKER_PASSWORD" |
+                            docker login \
+                              -u "$DOCKER_USER" \
+                              --password-stdin
+                        '''
+
+                        if (env.BACKEND_CHANGED == 'true') {
+
+                            def backendVersionImage =
+                                "${DOCKERHUB_REPO}-backend:${env.BACKEND_VERSION}"
+
+                            def backendShaImage =
+                                "${DOCKERHUB_REPO}-backend:sha.${env.CURRENT_SHORT_SHA}"
+
+                            echo "Checking Docker Hub:"
+                            echo "${backendVersionImage}"
+                            echo "${backendShaImage}"
+
+                            /*
+                             * Image yoksa normal şekilde devam edilir.
+                             *
+                             * Image varsa SHA label'ı okunmaya çalışılır.
+                             */
+                            def versionExists = sh(
+                                script: """
+                                    docker manifest inspect \
+                                    '${backendVersionImage}' \
+                                    >/dev/null 2>&1
+                                """,
+                                returnStatus: true
+                            ) == 0
+
+                            if (versionExists) {
+                                error(
+                                    "Backend version ${env.BACKEND_VERSION} already exists on Docker Hub. " +
+                                    "A version cannot be reused for another commit."
+                                )
+                            }
+                        }
+
+                        if (env.FRONTEND_CHANGED == 'true') {
+
+                            def frontendVersionImage =
+                                "${DOCKERHUB_REPO}-frontend:${env.FRONTEND_VERSION}"
+
+                            def versionExists = sh(
+                                script: """
+                                    docker manifest inspect \
+                                    '${frontendVersionImage}' \
+                                    >/dev/null 2>&1
+                                """,
+                                returnStatus: true
+                            ) == 0
+
+                            if (versionExists) {
+                                error(
+                                    "Frontend version ${env.FRONTEND_VERSION} already exists on Docker Hub. " +
+                                    "A version cannot be reused for another commit."
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ============================================================
+        // 09 - Build Backend
+        // ============================================================
+        stage('09 - Build Backend') {
+            when {
+                expression {
+                    env.BACKEND_CHANGED == 'true'
+                }
+            }
+
+            steps {
+                script {
+
+                    def versionImage =
+                        "${DOCKERHUB_REPO}-backend:${env.BACKEND_VERSION}"
+
+                    def shaImage =
+                        "${DOCKERHUB_REPO}-backend:sha.${env.CURRENT_SHORT_SHA}"
+
+                    sh """
+                        docker build \
+                            -t '${versionImage}' \
+                            -t '${shaImage}' \
+                            '${BACKEND_DIR}'
+                    """
+                }
+            }
+        }
+
+        // ============================================================
+        // 10 - Build Frontend
+        // ============================================================
+        stage('10 - Build Frontend') {
+            when {
+                expression {
+                    env.FRONTEND_CHANGED == 'true'
+                }
+            }
+
+            steps {
+                script {
+
+                    def versionImage =
+                        "${DOCKERHUB_REPO}-frontend:${env.FRONTEND_VERSION}"
+
+                    def shaImage =
+                        "${DOCKERHUB_REPO}-frontend:sha.${env.CURRENT_SHORT_SHA}"
+
+                    sh """
+                        docker build \
+                            -t '${versionImage}' \
+                            -t '${shaImage}' \
+                            '${FRONTEND_DIR}'
+                    """
+                }
+            }
+        }
+
+        // ============================================================
+        // 11 - Push Backend
+        // ============================================================
+        stage('11 - Push Backend') {
+            when {
+                expression {
+                    env.BACKEND_CHANGED == 'true'
+                }
+            }
+
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: env.DOCKER_CREDENTIALS,
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )
+                ]) {
+
+                    sh """
+                        docker push \
+                            '${DOCKERHUB_REPO}-backend:${env.BACKEND_VERSION}'
+
+                        docker push \
+                            '${DOCKERHUB_REPO}-backend:sha.${env.CURRENT_SHORT_SHA}'
+                    """
+                }
+            }
+        }
+
+        // ============================================================
+        // 12 - Push Frontend
+        // ============================================================
+        stage('12 - Push Frontend') {
+            when {
+                expression {
+                    env.FRONTEND_CHANGED == 'true'
+                }
+            }
+
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: env.DOCKER_CREDENTIALS,
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )
+                ]) {
+
+                    sh """
+                        docker push \
+                            '${DOCKERHUB_REPO}-frontend:${env.FRONTEND_VERSION}'
+
+                        docker push \
+                            '${DOCKERHUB_REPO}-frontend:sha.${env.CURRENT_SHORT_SHA}'
+                    """
+                }
+            }
+        }
+
+        // ============================================================
+        // 13 - Create GitHub Tags
+        // ============================================================
+        stage('13 - Create GitHub Tags') {
+            steps {
+                script {
 
                     if (env.BACKEND_CHANGED == 'true') {
-                        echo
-                        echo "Backend version : ${env.BACKEND_VERSION}"
-                        echo "Backend Git tag : ${env.BACKEND_GITHUB_TAG}"
-                        echo "Backend Docker  : ${env.BACKEND_REPO}:${env.BACKEND_VERSION}"
-                        echo "Backend Docker  : ${env.BACKEND_REPO}:${env.SHORT_SHA}"
+
+                        sh """
+                            git tag \
+                                '${env.BACKEND_TAG}' \
+                                '${env.CURRENT_SHA}'
+
+                            git push origin \
+                                '${env.BACKEND_TAG}'
+                        """
                     }
 
                     if (env.FRONTEND_CHANGED == 'true') {
-                        echo
-                        echo "Frontend version : ${env.FRONTEND_VERSION}"
-                        echo "Frontend Git tag : ${env.FRONTEND_GITHUB_TAG}"
-                        echo "Frontend Docker  : ${env.FRONTEND_REPO}:${env.FRONTEND_VERSION}"
-                        echo "Frontend Docker  : ${env.FRONTEND_REPO}:${env.SHORT_SHA}"
-                    }
-                }
-            }
-        }
 
-
-        // ============================================================
-        // 10 - BUILD BACKEND
-        // ============================================================
-
-        stage('10 - Build Backend') {
-            when {
-                expression {
-                    env.BACKEND_CHANGED == 'true'
-                }
-            }
-
-            steps {
-
-                echo '========== 10 - BUILD BACKEND =========='
-
-                sh '''
-                    set -eu
-
-                    test -d backend
-                    test -f backend/Dockerfile
-
-                    docker build \
-                        -t "${BACKEND_REPO}:${BACKEND_VERSION}" \
-                        -t "${BACKEND_REPO}:${SHORT_SHA}" \
-                        ./backend
-
-                    docker image inspect \
-                        "${BACKEND_REPO}:${BACKEND_VERSION}"
-
-                    docker image inspect \
-                        "${BACKEND_REPO}:${SHORT_SHA}"
-
-                    echo "Backend build OK."
-                '''
-            }
-        }
-
-
-        // ============================================================
-        // 11 - BUILD FRONTEND
-        // ============================================================
-
-        stage('11 - Build Frontend') {
-            when {
-                expression {
-                    env.FRONTEND_CHANGED == 'true'
-                }
-            }
-
-            steps {
-
-                echo '========== 11 - BUILD FRONTEND =========='
-
-                sh '''
-                    set -eu
-
-                    test -d frontend
-                    test -f frontend/Dockerfile
-
-                    docker build \
-                        -t "${FRONTEND_REPO}:${FRONTEND_VERSION}" \
-                        -t "${FRONTEND_REPO}:${SHORT_SHA}" \
-                        ./frontend
-
-                    docker image inspect \
-                        "${FRONTEND_REPO}:${FRONTEND_VERSION}"
-
-                    docker image inspect \
-                        "${FRONTEND_REPO}:${SHORT_SHA}"
-
-                    echo "Frontend build OK."
-                '''
-            }
-        }
-
-
-        // ============================================================
-        // 12 - DOCKER HUB CONFLICT CHECK
-        // ============================================================
-
-        stage('12 - Docker Hub Conflict Check') {
-            when {
-                anyOf {
-                    expression { env.BACKEND_CHANGED == 'true' }
-                    expression { env.FRONTEND_CHANGED == 'true' }
-                }
-            }
-
-            steps {
-
-                echo '========== 12 - DOCKER HUB CONFLICT CHECK =========='
-
-                withCredentials([
-                    string(
-                        credentialsId: 'DOCKER_PASSWORD',
-                        variable: 'DOCKER_PASSWORD'
-                    )
-                ]) {
-
-                    sh '''
-                        set -eu
-                        set +x
-
-                        echo "${DOCKER_PASSWORD}" | docker login \
-                            -u "${DOCKER_USER}" \
-                            --password-stdin
-
-                        check_tag() {
-
-                            REPO="$1"
-                            TAG="$2"
-
-                            echo
-                            echo "Checking Docker Hub:"
-                            echo "${REPO}:${TAG}"
-
-                            if docker manifest inspect "${REPO}:${TAG}" >/dev/null 2>&1; then
-                                echo "Docker tag already exists."
-
-                                return 0
-                            fi
-
-                            echo "Docker tag does not exist."
-
-                            return 1
-                        }
-
-
-                        # ------------------------------------------------
-                        # Backend
-                        # ------------------------------------------------
-
-                        if [ "${BACKEND_CHANGED}" = "true" ]; then
-
-                            if docker manifest inspect \
-                                "${BACKEND_REPO}:${BACKEND_VERSION}" \
-                                >/dev/null 2>&1; then
-
-                                echo
-                                echo "ERROR:"
-                                echo "Backend version ${BACKEND_VERSION} already exists."
-
-                                exit 1
-                            fi
-
-                            if docker manifest inspect \
-                                "${BACKEND_REPO}:${SHORT_SHA}" \
-                                >/dev/null 2>&1; then
-
-                                echo
-                                echo "ERROR:"
-                                echo "Backend SHA tag ${SHORT_SHA} already exists."
-
-                                exit 1
-                            fi
-                        fi
-
-
-                        # ------------------------------------------------
-                        # Frontend
-                        # ------------------------------------------------
-
-                        if [ "${FRONTEND_CHANGED}" = "true" ]; then
-
-                            if docker manifest inspect \
-                                "${FRONTEND_REPO}:${FRONTEND_VERSION}" \
-                                >/dev/null 2>&1; then
-
-                                echo
-                                echo "ERROR:"
-                                echo "Frontend version ${FRONTEND_VERSION} already exists."
-
-                                exit 1
-                            fi
-
-                            if docker manifest inspect \
-                                "${FRONTEND_REPO}:${SHORT_SHA}" \
-                                >/dev/null 2>&1; then
-
-                                echo
-                                echo "ERROR:"
-                                echo "Frontend SHA tag ${SHORT_SHA} already exists."
-
-                                exit 1
-                            fi
-                        fi
-
-                        echo
-                        echo "Docker Hub conflict check OK."
-                    '''
-                }
-            }
-        }
-
-
-        // ============================================================
-        // 13 - PUSH BACKEND
-        // ============================================================
-
-        stage('13 - Push Backend') {
-            when {
-                expression {
-                    env.BACKEND_CHANGED == 'true'
-                }
-            }
-
-            steps {
-
-                echo '========== 13 - PUSH BACKEND =========='
-
-                withCredentials([
-                    string(
-                        credentialsId: 'DOCKER_PASSWORD',
-                        variable: 'DOCKER_PASSWORD'
-                    )
-                ]) {
-
-                    sh '''
-                        set -eu
-                        set +x
-
-                        echo "${DOCKER_PASSWORD}" | docker login \
-                            -u "${DOCKER_USER}" \
-                            --password-stdin
-
-                        docker push "${BACKEND_REPO}:${BACKEND_VERSION}"
-                        docker push "${BACKEND_REPO}:${SHORT_SHA}"
-
-                        echo
-                        echo "Backend Docker push OK."
-                    '''
-                }
-            }
-        }
-
-
-        // ============================================================
-        // 14 - PUSH FRONTEND
-        // ============================================================
-
-        stage('14 - Push Frontend') {
-            when {
-                expression {
-                    env.FRONTEND_CHANGED == 'true'
-                }
-            }
-
-            steps {
-
-                echo '========== 14 - PUSH FRONTEND =========='
-
-                withCredentials([
-                    string(
-                        credentialsId: 'DOCKER_PASSWORD',
-                        variable: 'DOCKER_PASSWORD'
-                    )
-                ]) {
-
-                    sh '''
-                        set -eu
-                        set +x
-
-                        echo "${DOCKER_PASSWORD}" | docker login \
-                            -u "${DOCKER_USER}" \
-                            --password-stdin
-
-                        docker push "${FRONTEND_REPO}:${FRONTEND_VERSION}"
-                        docker push "${FRONTEND_REPO}:${SHORT_SHA}"
-
-                        echo
-                        echo "Frontend Docker push OK."
-                    '''
-                }
-            }
-        }
-
-
-        // ============================================================
-        // 15 - VERIFY DOCKER DIGESTS
-        // ============================================================
-
-        stage('15 - Verify Docker Images') {
-            when {
-                anyOf {
-                    expression { env.BACKEND_CHANGED == 'true' }
-                    expression { env.FRONTEND_CHANGED == 'true' }
-                }
-            }
-
-            steps {
-
-                echo '========== 15 - VERIFY DOCKER IMAGES =========='
-
-                sh '''
-                    set -eu
-
-                    verify_pair() {
-
-                        REPO="$1"
-                        VERSION_TAG="$2"
-                        SHA_TAG="$3"
-
-                        echo
-                        echo "Repository: ${REPO}"
-
-                        VERSION_DIGEST=$(
-                            docker buildx imagetools inspect \
-                                "${REPO}:${VERSION_TAG}" |
-                            awk '/^Digest:/ {print $2; exit}'
-                        )
-
-                        SHA_DIGEST=$(
-                            docker buildx imagetools inspect \
-                                "${REPO}:${SHA_TAG}" |
-                            awk '/^Digest:/ {print $2; exit}'
-                        )
-
-                        test -n "${VERSION_DIGEST}"
-                        test -n "${SHA_DIGEST}"
-
-                        echo "Version digest: ${VERSION_DIGEST}"
-                        echo "SHA digest    : ${SHA_DIGEST}"
-
-                        test "${VERSION_DIGEST}" = "${SHA_DIGEST}"
-
-                        echo "Digest match OK."
+                        sh """
+                            git tag \
+                                '${env.FRONTEND_TAG}' \
+                                '${env.CURRENT_SHA}'
+
+                            git push origin \
+                                '${env.FRONTEND_TAG}'
+                        """
                     }
 
-
-                    if [ "${BACKEND_CHANGED}" = "true" ]; then
-
-                        verify_pair \
-                            "${BACKEND_REPO}" \
-                            "${BACKEND_VERSION}" \
-                            "${SHORT_SHA}"
-                    fi
-
-
-                    if [ "${FRONTEND_CHANGED}" = "true" ]; then
-
-                        verify_pair \
-                            "${FRONTEND_REPO}" \
-                            "${FRONTEND_VERSION}" \
-                            "${SHORT_SHA}"
-                    fi
-                '''
-            }
-        }
-
-
-        // ============================================================
-        // 16 - CREATE GITHUB RELEASE TAGS
-        // ============================================================
-
-        stage('16 - Create GitHub Release Tags') {
-            when {
-                anyOf {
-                    expression { env.BACKEND_CHANGED == 'true' }
-                    expression { env.FRONTEND_CHANGED == 'true' }
+                    echo """
+========== TAG RESULT ==========
+Backend  : ${env.BACKEND_TAG ?: 'NO TAG'}
+Frontend : ${env.FRONTEND_TAG ?: 'NO TAG'}
+"""
                 }
-            }
-
-            steps {
-
-                echo '========== 16 - CREATE GITHUB RELEASE TAGS =========='
-
-                withCredentials([
-                    string(
-                        credentialsId: 'GITHUB_TOKEN',
-                        variable: 'GITHUB_TOKEN'
-                    )
-                ]) {
-
-                    sh '''
-                        set -eu
-                        set +x
-
-                        create_tag() {
-
-                            TAG="$1"
-
-                            echo
-                            echo "Creating GitHub tag:"
-                            echo "${TAG}"
-
-                            STATUS=$(
-                                curl -sS \
-                                    -o /tmp/tag-result.json \
-                                    -w "%{http_code}" \
-                                    -X POST \
-                                    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                                    -H "Accept: application/vnd.github+json" \
-                                    -H "Content-Type: application/json" \
-                                    "${GITHUB_API}/repos/${GITHUB_REPO}/git/refs" \
-                                    -d "{
-                                        \\"ref\\": \\"refs/tags/${TAG}\\",
-                                        \\"sha\\": \\"${CURRENT_SHA}\\"
-                                    }"
-                            )
-
-                            echo "GitHub tag HTTP status: ${STATUS}"
-
-                            if [ "${STATUS}" != "201" ]; then
-
-                                echo
-                                echo "GitHub tag creation failed:"
-                                cat /tmp/tag-result.json
-
-                                exit 1
-                            fi
-
-                            echo "GitHub tag created OK."
-                        }
-
-
-                        if [ "${BACKEND_CHANGED}" = "true" ]; then
-                            create_tag "${BACKEND_GITHUB_TAG}"
-                        fi
-
-
-                        if [ "${FRONTEND_CHANGED}" = "true" ]; then
-                            create_tag "${FRONTEND_GITHUB_TAG}"
-                        fi
-                    '''
-                }
-            }
-        }
-
-
-        // ============================================================
-        // 17 - VERIFY GITHUB TAGS
-        // ============================================================
-
-        stage('17 - Verify GitHub Tags') {
-            when {
-                anyOf {
-                    expression { env.BACKEND_CHANGED == 'true' }
-                    expression { env.FRONTEND_CHANGED == 'true' }
-                }
-            }
-
-            steps {
-
-                echo '========== 17 - VERIFY GITHUB TAGS =========='
-
-                withCredentials([
-                    string(
-                        credentialsId: 'GITHUB_TOKEN',
-                        variable: 'GITHUB_TOKEN'
-                    )
-                ]) {
-
-                    sh '''
-                        set -eu
-                        set +x
-
-                        verify_tag() {
-
-                            TAG="$1"
-
-                            echo
-                            echo "Verifying:"
-                            echo "${TAG}"
-
-                            STATUS=$(
-                                curl -sS \
-                                    -o /tmp/verify-tag.json \
-                                    -w "%{http_code}" \
-                                    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                                    -H "Accept: application/vnd.github+json" \
-                                    "${GITHUB_API}/repos/${GITHUB_REPO}/git/ref/tags/${TAG}"
-                            )
-
-                            echo "HTTP status: ${STATUS}"
-
-                            test "${STATUS}" = "200"
-
-                            REMOTE_SHA=$(
-                                python3 - <<'PY'
-import json
-
-with open("/tmp/verify-tag.json") as f:
-    data = json.load(f)
-
-print(data.get("object", {}).get("sha", ""))
-PY
-                            )
-
-                            echo "Tag object SHA: ${REMOTE_SHA}"
-
-                            test -n "${REMOTE_SHA}"
-
-                            # Tag ruleset / annotated tag durumundan dolayı
-                            # object SHA doğrudan commit olmayabilir.
-                            # Bu nedenle rev-parse ile local Git'ten ayrıca
-                            # doğrulama yapıyoruz.
-                        }
-
-
-                        if [ "${BACKEND_CHANGED}" = "true" ]; then
-
-                            verify_tag "${BACKEND_GITHUB_TAG}"
-
-                            git fetch --tags --force origin
-
-                            TAG_COMMIT=$(
-                                git rev-list \
-                                    -n 1 \
-                                    "${BACKEND_GITHUB_TAG}"
-                            )
-
-                            echo "Backend tag commit: ${TAG_COMMIT}"
-
-                            test "${TAG_COMMIT}" = "${CURRENT_SHA}"
-                        fi
-
-
-                        if [ "${FRONTEND_CHANGED}" = "true" ]; then
-
-                            verify_tag "${FRONTEND_GITHUB_TAG}"
-
-                            git fetch --tags --force origin
-
-                            TAG_COMMIT=$(
-                                git rev-list \
-                                    -n 1 \
-                                    "${FRONTEND_GITHUB_TAG}"
-                            )
-
-                            echo "Frontend tag commit: ${TAG_COMMIT}"
-
-                            test "${TAG_COMMIT}" = "${CURRENT_SHA}"
-                        fi
-
-                        echo
-                        echo "GitHub tag verification OK."
-                    '''
-                }
-            }
-        }
-
-
-        // ============================================================
-        // 18 - FINAL VERIFICATION
-        // ============================================================
-
-        stage('18 - Final Verification') {
-            steps {
-
-                echo '========== 18 - FINAL VERIFICATION =========='
-
-                sh '''
-                    set -eu
-
-                    echo
-                    echo "========================================"
-                    echo "VERSIONING PIPELINE"
-                    echo "========================================"
-                    echo
-
-                    echo "Current commit:"
-                    echo "${CURRENT_SHA}"
-
-                    echo
-                    echo "Backend changed:"
-                    echo "${BACKEND_CHANGED}"
-
-                    echo "Frontend changed:"
-                    echo "${FRONTEND_CHANGED}"
-
-                    echo
-
-                    if [ "${BACKEND_CHANGED}" = "true" ]; then
-
-                        echo "Backend release:"
-                        echo "  Version : ${BACKEND_VERSION}"
-                        echo "  Git tag : ${BACKEND_GITHUB_TAG}"
-                        echo "  Docker  : ${BACKEND_REPO}:${BACKEND_VERSION}"
-                        echo "  Docker  : ${BACKEND_REPO}:${SHORT_SHA}"
-
-                    else
-
-                        echo "Backend:"
-                        echo "  SKIPPED"
-
-                    fi
-
-                    echo
-
-                    if [ "${FRONTEND_CHANGED}" = "true" ]; then
-
-                        echo "Frontend release:"
-                        echo "  Version : ${FRONTEND_VERSION}"
-                        echo "  Git tag : ${FRONTEND_GITHUB_TAG}"
-                        echo "  Docker  : ${FRONTEND_REPO}:${FRONTEND_VERSION}"
-                        echo "  Docker  : ${FRONTEND_REPO}:${SHORT_SHA}"
-
-                    else
-
-                        echo "Frontend:"
-                        echo "  SKIPPED"
-
-                    fi
-
-                    echo
-                    echo "========================================"
-                    echo "ALL VERSIONING TESTS PASSED"
-                    echo "========================================"
-                '''
             }
         }
     }
 
-
     // ================================================================
-    // POST / CLEANUP
+    // POST
     // ================================================================
-
     post {
 
         always {
-
-            echo '========== CLEANUP =========='
-
             sh '''
-                set +e
-
-                echo "Removing local images..."
-
-                if [ -n "${BACKEND_VERSION:-}" ]; then
-                    docker rmi \
-                        "${BACKEND_REPO}:${BACKEND_VERSION}" \
-                        >/dev/null 2>&1 || true
-                fi
-
-                if [ -n "${BACKEND_SHA_TAG:-}" ]; then
-                    docker rmi \
-                        "${BACKEND_REPO}:${BACKEND_SHA_TAG}" \
-                        >/dev/null 2>&1 || true
-                fi
-
-                if [ -n "${FRONTEND_VERSION:-}" ]; then
-                    docker rmi \
-                        "${FRONTEND_REPO}:${FRONTEND_VERSION}" \
-                        >/dev/null 2>&1 || true
-                fi
-
-                if [ -n "${FRONTEND_SHA_TAG:-}" ]; then
-                    docker rmi \
-                        "${FRONTEND_REPO}:${FRONTEND_SHA_TAG}" \
-                        >/dev/null 2>&1 || true
-                fi
-
-                docker logout >/dev/null 2>&1 || true
-
-                echo "Cleanup completed."
+                docker logout || true
             '''
-        }
 
+            echo """
+========== PIPELINE SUMMARY ==========
+
+Current Commit : ${CURRENT_SHA}
+Short SHA      : ${CURRENT_SHORT_SHA}
+
+Backend Changed  : ${BACKEND_CHANGED}
+Backend Version  : ${BACKEND_VERSION}
+Backend Tag      : ${BACKEND_TAG}
+
+Frontend Changed : ${FRONTEND_CHANGED}
+Frontend Version : ${FRONTEND_VERSION}
+Frontend Tag     : ${FRONTEND_TAG}
+"""
+        }
 
         success {
-
-            echo '''
-========================================
-JENKINS VERSIONING: SUCCESS
-========================================
-'''
+            echo 'Versioning pipeline completed successfully.'
         }
 
-
         failure {
-
-            echo '''
-========================================
-JENKINS VERSIONING: FAILED
-========================================
-'''
+            echo 'Versioning pipeline FAILED.'
         }
     }
 }
