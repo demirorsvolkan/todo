@@ -126,24 +126,27 @@ pipeline {
                         set -eu
                         set +x
 
-                        echo "origin:"
-                        git remote get-url origin
+                        HTTP_STATUS=$(curl -sS \
+                            -o /tmp/github_repo.json \
+                            -w "%{http_code}" \
+                            -H "Authorization: Bearer $GITHUB_TOKEN" \
+                            -H "Accept: application/vnd.github+json" \
+                            https://api.github.com/repos/demirorsvolkan/todo)
 
-                        echo
-                        echo "GitHub repository erişimi test ediliyor..."
+                        echo "GitHub repository API HTTP status: $HTTP_STATUS"
 
-                        git \
-                            -c http.extraheader="Authorization: Bearer ${GITHUB_TOKEN}" \
-                            ls-remote \
-                            origin \
-                            HEAD
+                        if [ "$HTTP_STATUS" != "200" ]; then
+                            echo "GitHub repository erişimi başarısız."
+                            cat /tmp/github_repo.json
+                            exit 1
+                        fi
 
-                        echo
-                        echo "Repository erişimi OK."
+                        echo "GitHub repository erişimi OK."
                     '''
                 }
             }
         }
+
 
 
         stage('04 - GitHub Branch Query') {
