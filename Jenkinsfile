@@ -9,12 +9,6 @@ pipeline {
     environment {
         BACKEND_IMAGE = 'volkandemirors/todo-backend'
         FRONTEND_IMAGE = 'volkandemirors/todo-frontend'
-
-        BACKEND_CHANGED = 'false'
-        FRONTEND_CHANGED = 'false'
-
-        BACKEND_SKIP = 'false'
-        FRONTEND_SKIP = 'false'
     }
 
     stages {
@@ -93,6 +87,9 @@ pipeline {
                      * - diff yapılmaz
                      * - component otomatik changed=true kabul edilir
                      */
+                    def backendChanged = false
+                    def frontendChanged = false
+
 
                     env.BACKEND_BASE_TAG = findLatestValidTag(
                         'backend',
@@ -111,7 +108,7 @@ pipeline {
 
                     if (env.BACKEND_BASE_TAG == 'NONE') {
 
-                        env.BACKEND_CHANGED = 'true'
+                        backendChanged = 'true'
 
                         echo 'Backend: RELEASE YOK'
                         echo 'Backend: İlk release → 0.0.0 baz alınacak'
@@ -124,7 +121,7 @@ pipeline {
                             env.BACKEND_BASE_TAG
                         )
 
-                        env.BACKEND_CHANGED = gitDiffExists(
+                        backendChanged = gitDiffExists(
                             backendCommit,
                             env.TRIGGER_SHA,
                             'backend/'
@@ -132,7 +129,7 @@ pipeline {
 
                         echo "Backend release : ${env.BACKEND_BASE_TAG}"
                         echo "Backend commit  : ${backendCommit}"
-                        echo "Backend changed : ${env.BACKEND_CHANGED}"
+                        echo "Backend changed : ${backendChanged}"
                     }
 
 
@@ -142,7 +139,7 @@ pipeline {
 
                     if (env.FRONTEND_BASE_TAG == 'NONE') {
 
-                        env.FRONTEND_CHANGED = 'true'
+                        frontendChanged = 'true'
 
                         echo 'Frontend: RELEASE YOK'
                         echo 'Frontend: İlk release → 0.0.0 baz alınacak'
@@ -155,7 +152,7 @@ pipeline {
                             env.FRONTEND_BASE_TAG
                         )
 
-                        env.FRONTEND_CHANGED = gitDiffExists(
+                        frontendChanged = gitDiffExists(
                             frontendCommit,
                             env.TRIGGER_SHA,
                             'frontend/'
@@ -163,15 +160,15 @@ pipeline {
 
                         echo "Frontend release : ${env.FRONTEND_BASE_TAG}"
                         echo "Frontend commit  : ${frontendCommit}"
-                        echo "Frontend changed : ${env.FRONTEND_CHANGED}"
+                        echo "Frontend changed : ${frontendChanged}"
                     }
 
 
                     echo '========================================'
                     echo "Backend base    : ${env.BACKEND_BASE_TAG}"
-                    echo "Backend changed : ${env.BACKEND_CHANGED}"
+                    echo "Backend changed : ${backendChanged}"
                     echo "Frontend base   : ${env.FRONTEND_BASE_TAG}"
-                    echo "Frontend changed: ${env.FRONTEND_CHANGED}"
+                    echo "Frontend changed: ${frontendChanged}"
                     echo '========================================'
 
 
@@ -181,8 +178,8 @@ pipeline {
                      * Hiç release yoksa zaten changed=true.
                      */
                     if (
-                        env.BACKEND_CHANGED != 'true' &&
-                        env.FRONTEND_CHANGED != 'true'
+                        backendChanged != 'true' &&
+                        frontendChanged != 'true'
                     ) {
                         error('Backend veya frontend değişmedi.')
                     }
@@ -218,7 +215,7 @@ pipeline {
                     // BACKEND VERSION
                     // ==========================
 
-                    if (env.BACKEND_CHANGED == 'true') {
+                    if (backendChanged == 'true') {
 
                         if (env.BACKEND_BASE_TAG == 'NONE') {
 
@@ -283,7 +280,7 @@ pipeline {
                     // FRONTEND VERSION
                     // ==========================
 
-                    if (env.FRONTEND_CHANGED == 'true') {
+                    if (frontendChanged == 'true') {
 
                         if (env.FRONTEND_BASE_TAG == 'NONE') {
 
@@ -380,7 +377,7 @@ pipeline {
 
 
                         if (
-                            env.BACKEND_CHANGED == 'true' &&
+                            backendChanged == 'true' &&
                             env.BACKEND_SKIP != 'true'
                         ) {
 
@@ -399,7 +396,7 @@ pipeline {
 
 
                         if (
-                            env.FRONTEND_CHANGED == 'true' &&
+                            frontendChanged == 'true' &&
                             env.FRONTEND_SKIP != 'true'
                         ) {
 
@@ -426,7 +423,7 @@ pipeline {
                 script {
 
                     if (
-                        env.BACKEND_CHANGED == 'true' &&
+                        backendChanged == 'true' &&
                         env.BACKEND_SKIP != 'true'
                     ) {
 
@@ -449,7 +446,7 @@ pipeline {
 
 
                     if (
-                        env.FRONTEND_CHANGED == 'true' &&
+                        frontendChanged == 'true' &&
                         env.FRONTEND_SKIP != 'true'
                     ) {
 
@@ -479,7 +476,7 @@ pipeline {
                 script {
 
                     if (
-                        env.BACKEND_CHANGED == 'true' &&
+                        backendChanged == 'true' &&
                         env.BACKEND_SKIP != 'true'
                     ) {
 
@@ -500,7 +497,7 @@ pipeline {
 
 
                     if (
-                        env.FRONTEND_CHANGED == 'true' &&
+                        frontendChanged == 'true' &&
                         env.FRONTEND_SKIP != 'true'
                     ) {
 
@@ -535,7 +532,7 @@ pipeline {
                     ]) {
 
                         if (
-                            env.BACKEND_CHANGED == 'true' &&
+                            backendChanged == 'true' &&
                             env.BACKEND_SKIP != 'true'
                         ) {
 
@@ -560,7 +557,7 @@ pipeline {
 
 
                         if (
-                            env.FRONTEND_CHANGED == 'true' &&
+                            frontendChanged == 'true' &&
                             env.FRONTEND_SKIP != 'true'
                         ) {
 
