@@ -458,6 +458,163 @@ pipeline {
                 '''
             }
         }
+        stage('12A - Docker Hub API Authentication Test') {
+    steps {
+        echo '========== DOCKER HUB API AUTH TEST =========='
+
+        withCredentials([
+            usernamePassword(
+                credentialsId: 'dockerhub-credentials',
+                usernameVariable: 'DOCKER_USERNAME',
+                passwordVariable: 'DOCKER_PASSWORD'
+            )
+        ]) {
+            sh '''
+                set -eu
+                set +x
+
+                echo "Docker Hub API authentication test..."
+
+                HTTP_CODE=$(
+                    curl \
+                        -sS \
+                        -o /tmp/docker-auth-response.json \
+                        -w "%{http_code}" \
+                        -u "${DOCKER_USERNAME}:${DOCKER_PASSWORD}" \
+                        "https://hub.docker.com/v2/user/"
+                )
+
+                echo "Docker Hub API HTTP status: $HTTP_CODE"
+
+                if [ "$HTTP_CODE" != "200" ]; then
+                    echo "Docker Hub API authentication BAŞARISIZ."
+                    cat /tmp/docker-auth-response.json
+                    exit 1
+                fi
+
+                echo "Docker Hub API authentication OK."
+            '''
+        }
+    }
+}
+stage('12B - Docker Hub Test Tag Query') {
+    steps {
+        echo '========== DOCKER HUB TEST TAG QUERY =========='
+
+        withCredentials([
+            usernamePassword(
+                credentialsId: 'dockerhub-credentials',
+                usernameVariable: 'DOCKER_USERNAME',
+                passwordVariable: 'DOCKER_PASSWORD'
+            )
+        ]) {
+            sh '''
+                set -eu
+                set +x
+
+                echo "Backend test tag:"
+                echo "$TEST_BACKEND_TAG"
+
+                HTTP_CODE=$(
+                    curl \
+                        -sS \
+                        -o /tmp/backend-tag.json \
+                        -w "%{http_code}" \
+                        -u "${DOCKER_USERNAME}:${DOCKER_PASSWORD}" \
+                        "https://hub.docker.com/v2/repositories/${BACKEND_IMAGE}/tags/${TEST_BACKEND_TAG}"
+                )
+
+                echo
+                echo "Backend tag HTTP status: $HTTP_CODE"
+
+                cat /tmp/backend-tag.json || true
+
+                if [ "$HTTP_CODE" != "200" ]; then
+                    echo
+                    echo "Backend test tag API üzerinden bulunamadı."
+                    exit 1
+                fi
+
+                echo
+                echo "Backend test tag API üzerinden bulundu."
+            '''
+        }
+    }
+}
+stage('12D - Docker Hub Test Tag DELETE') {
+    steps {
+        echo '========== DOCKER HUB TEST TAG DELETE =========='
+
+        withCredentials([
+            usernamePassword(
+                credentialsId: 'dockerhub-credentials',
+                usernameVariable: 'DOCKER_USERNAME',
+                passwordVariable: 'DOCKER_PASSWORD'
+            )
+        ]) {
+            sh '''
+                set -eu
+                set +x
+
+                echo "Backend test tag siliniyor..."
+
+                HTTP_CODE=$(
+                    curl \
+                        -sS \
+                        -o /tmp/backend-delete.json \
+                        -w "%{http_code}" \
+                        -X DELETE \
+                        -u "${DOCKER_USERNAME}:${DOCKER_PASSWORD}" \
+                        "https://hub.docker.com/v2/repositories/${BACKEND_IMAGE}/tags/${TEST_BACKEND_TAG}/"
+                )
+
+                echo
+                echo "Backend DELETE HTTP status: $HTTP_CODE"
+
+                cat /tmp/backend-delete.json || true
+
+                if [ "$HTTP_CODE" != "204" ]; then
+                    echo
+                    echo "Backend test tag SİLİNEMEDİ."
+                    exit 1
+                fi
+
+                echo
+                echo "Backend test tag SILINDI."
+
+
+
+                echo
+                echo "Frontend test tag siliniyor..."
+
+                HTTP_CODE=$(
+                    curl \
+                        -sS \
+                        -o /tmp/frontend-delete.json \
+                        -w "%{http_code}" \
+                        -X DELETE \
+                        -u "${DOCKER_USERNAME}:${DOCKER_PASSWORD}" \
+                        "https://hub.docker.com/v2/repositories/${FRONTEND_IMAGE}/tags/${TEST_FRONTEND_TAG}/"
+                )
+
+                echo
+                echo "Frontend DELETE HTTP status: $HTTP_CODE"
+
+                cat /tmp/frontend-delete.json || true
+
+                if [ "$HTTP_CODE" != "204" ]; then
+                    echo
+                    echo "Frontend test tag SİLİNEMEDİ."
+                    exit 1
+                fi
+
+                echo
+                echo "Frontend test tag SILINDI."
+            '''
+        }
+    }
+}
+
 
 
         stage('13 - Docker Existing Tags Query') {
