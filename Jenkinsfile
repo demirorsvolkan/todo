@@ -534,14 +534,21 @@ def findLatestValidTag(
     String triggerSha
 ) {
 
+    /*
+     * Regex'i Groovy dışında, shell değişkeni üzerinden oluşturuyoruz.
+     *
+     * Böylece \$ problemi yaşamıyoruz.
+     */
+    def tagPattern =
+        "^${component}/v[0-9]+\\.[0-9]+\\.[0-9]+-sha\\.[0-9a-fA-F]+\$"
+
+
     def tags = sh(
         script: """
             set -e
 
-            git tag \
-                --merged '${triggerSha}' \
-                --sort=-v:refname |
-            grep -E '^${component}/v[0-9]+\\\\.[0-9]+\\\\.[0-9]+-sha\\\\.[0-9a-fA-F]+\\\$' ||
+            git tag --merged '${triggerSha}' --sort=-v:refname |
+            grep -E '${tagPattern}' ||
             true
         """,
         returnStdout: true
@@ -587,10 +594,6 @@ def findLatestValidTag(
             getTagCommit(tag)
 
 
-        /*
-         * Tag formatındaki SHA gerçekten tag'in
-         * işaret ettiği commit'in prefix'i mi?
-         */
         if (
             !tagCommit
                 .toLowerCase()
@@ -649,6 +652,7 @@ def getTagCommit(String tag) {
     return sh(
         script: """
             set -e
+
             git rev-list -n 1 '${tag}'
         """,
         returnStdout: true
@@ -719,6 +723,17 @@ def checkDockerImage(
      * --------------------------------------------------------------
      * GITHUB TAG KONTROLÜ
      * --------------------------------------------------------------
+     *
+     * ÖNEMLİ:
+     *
+     * Burada triple-single-quote kullanıyoruz.
+     *
+     * Böylece Groovy:
+     *
+     *     $GITHUB_TOKEN
+     *     $GITHUB_TAG
+     *
+     * ifadelerine dokunmuyor.
      */
     def remoteTagOutput = sh(
         script: '''
@@ -739,27 +754,52 @@ def checkDockerImage(
 
     if (remoteTagOutput) {
 
-        remoteTagCommit = sh(
-            script: """
-                printf '%s\\n' '${remoteTagOutput}' |
-                awk '\\$2 == "refs/tags/${githubTag}^{}" {print \\$1; exit}'
-            """,
-            returnStdout: true
-        ).trim()
+        /*
+         * ----------------------------------------------------------
+         * ANNOTATED TAG
+         * ----------------------------------------------------------
+         *
+         * Groovy interpolation YOK.
+         *
+         * Değerleri environment üzerinden awk'a veriyoruz.
+         */
+        withEnv([
+            "REMOTE_TAG_OUTPUT=${remoteTagOutput}",
+            "EXPECTED_GITHUB_TAG=${githubTag}"
+        ]) {
+
+            remoteTagCommit = sh(
+                script: '''
+                    printf '%s\n' "$REMOTE_TAG_OUTPUT" |
+                    awk -v tag="$EXPECTED_GITHUB_TAG" \
+                        '$2 == "refs/tags/" tag "^{}" {print $1; exit}'
+                ''',
+                returnStdout: true
+            ).trim()
+        }
 
 
         /*
-         * Lightweight tag fallback.
+         * ----------------------------------------------------------
+         * LIGHTWEIGHT TAG FALLBACK
+         * ----------------------------------------------------------
          */
         if (!remoteTagCommit) {
 
-            remoteTagCommit = sh(
-                script: """
-                    printf '%s\\n' '${remoteTagOutput}' |
-                    awk '\\$2 == "refs/tags/${githubTag}" {print \\$1; exit}'
-                """,
-                returnStdout: true
-            ).trim()
+            withEnv([
+                "REMOTE_TAG_OUTPUT=${remoteTagOutput}",
+                "EXPECTED_GITHUB_TAG=${githubTag}"
+            ]) {
+
+                remoteTagCommit = sh(
+                    script: '''
+                        printf '%s\n' "$REMOTE_TAG_OUTPUT" |
+                        awk -v tag="$EXPECTED_GITHUB_TAG" \
+                            '$2 == "refs/tags/" tag {print $1; exit}'
+                    ''',
+                    returnStdout: true
+                ).trim()
+            }
         }
 
 
@@ -839,10 +879,6 @@ def checkDockerImage(
      * --------------------------------------------------------------
      * IMAGE YOK + TAG VAR
      * --------------------------------------------------------------
-     *
-     * Bu durum normal değildir.
-     *
-     * GitHub release tag var fakat Docker image yok.
      */
     if (!versionExists && remoteTagOutput) {
 
@@ -909,7 +945,7 @@ def checkDockerImage(
 
 
     /*
-     * Version var + SHA yok = yarım release.
+     * Version var + SHA yok.
      */
     if (!shaDigest) {
 
