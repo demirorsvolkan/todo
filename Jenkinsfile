@@ -36,6 +36,7 @@ pipeline {
             }
         }
 
+
         stage('Validate Trigger') {
             steps {
                 script {
@@ -55,22 +56,27 @@ pipeline {
                         returnStatus: true
                     ) == 0
 
+
                     if (isTagBuild) {
                         currentBuild.result = 'NOT_BUILT'
                         error('Tag-triggered build ignored.')
                     }
+
 
                     env.TRIGGER_SHA = sh(
                         script: 'git rev-parse HEAD',
                         returnStdout: true
                     ).trim()
 
+
                     env.SHORT_SHA = env.TRIGGER_SHA.take(7)
+
 
                     env.COMMIT_MESSAGE = sh(
                         script: 'git log -1 --pretty=%B',
                         returnStdout: true
                     ).trim()
+
 
                     echo "Trigger SHA    : ${env.TRIGGER_SHA}"
                     echo "Short SHA      : ${env.SHORT_SHA}"
@@ -78,6 +84,7 @@ pipeline {
                 }
             }
         }
+
 
         stage('Detect Changes') {
             steps {
@@ -88,15 +95,18 @@ pipeline {
                         env.TRIGGER_SHA
                     )
 
+
                     env.BACKEND_BASE_COMMIT = getTagCommit(
                         env.BACKEND_BASE_TAG
                     )
+
 
                     env.BACKEND_CHANGED = gitDiffExists(
                         env.BACKEND_BASE_COMMIT,
                         env.TRIGGER_SHA,
                         'backend/'
                     ) ? 'true' : 'false'
+
 
                     echo """
                     ============================
@@ -109,20 +119,24 @@ pipeline {
                     Changed          : ${env.BACKEND_CHANGED}
                     """
 
+
                     env.FRONTEND_BASE_TAG = findLatestValidTag(
                         'frontend',
                         env.TRIGGER_SHA
                     )
 
+
                     env.FRONTEND_BASE_COMMIT = getTagCommit(
                         env.FRONTEND_BASE_TAG
                     )
+
 
                     env.FRONTEND_CHANGED = gitDiffExists(
                         env.FRONTEND_BASE_COMMIT,
                         env.TRIGGER_SHA,
                         'frontend/'
                     ) ? 'true' : 'false'
+
 
                     echo """
                     ============================
@@ -135,10 +149,12 @@ pipeline {
                     Changed          : ${env.FRONTEND_CHANGED}
                     """
 
+
                     if (
                         env.BACKEND_CHANGED == 'false' &&
                         env.FRONTEND_CHANGED == 'false'
                     ) {
+
                         currentBuild.result = 'NOT_BUILT'
 
                         error(
@@ -149,11 +165,13 @@ pipeline {
             }
         }
 
+
         stage('Calculate Versions') {
             steps {
                 script {
 
                     def versionType = 'patch'
+
 
                     if (env.COMMIT_MESSAGE =~ /(?m)^feat!:/) {
                         versionType = 'major'
@@ -165,7 +183,9 @@ pipeline {
                         versionType = 'patch'
                     }
 
+
                     echo "Version değişikliği: ${versionType}"
+
 
                     if (env.BACKEND_CHANGED == 'true') {
 
@@ -174,15 +194,18 @@ pipeline {
                         def matcher = backendTag =~
                             /^backend\/v([0-9]+)\.([0-9]+)\.([0-9]+)-sha\.([0-9a-fA-F]+)$/
 
+
                         if (!matcher.matches()) {
                             error(
                                 "Geçersiz backend base tag formatı: ${backendTag}"
                             )
                         }
 
+
                         int major = matcher[0][1] as int
                         int minor = matcher[0][2] as int
                         int patch = matcher[0][3] as int
+
 
                         if (versionType == 'major') {
                             major++
@@ -197,11 +220,14 @@ pipeline {
                             patch++
                         }
 
+
                         env.BACKEND_VERSION =
                             "${major}.${minor}.${patch}"
 
+
                         env.BACKEND_TAG =
                             "backend/v${env.BACKEND_VERSION}-sha.${env.SHORT_SHA}"
+
 
                         echo """
                         BACKEND VERSION
@@ -212,6 +238,7 @@ pipeline {
                         """
                     }
 
+
                     if (env.FRONTEND_CHANGED == 'true') {
 
                         def frontendTag = env.FRONTEND_BASE_TAG
@@ -219,15 +246,18 @@ pipeline {
                         def matcher = frontendTag =~
                             /^frontend\/v([0-9]+)\.([0-9]+)\.([0-9]+)-sha\.([0-9a-fA-F]+)$/
 
+
                         if (!matcher.matches()) {
                             error(
                                 "Geçersiz frontend base tag formatı: ${frontendTag}"
                             )
                         }
 
+
                         int major = matcher[0][1] as int
                         int minor = matcher[0][2] as int
                         int patch = matcher[0][3] as int
+
 
                         if (versionType == 'major') {
                             major++
@@ -242,11 +272,14 @@ pipeline {
                             patch++
                         }
 
+
                         env.FRONTEND_VERSION =
                             "${major}.${minor}.${patch}"
 
+
                         env.FRONTEND_TAG =
                             "frontend/v${env.FRONTEND_VERSION}-sha.${env.SHORT_SHA}"
+
 
                         echo """
                         FRONTEND VERSION
@@ -259,6 +292,7 @@ pipeline {
                 }
             }
         }
+
 
         stage('Docker Hub Check') {
             steps {
@@ -286,6 +320,7 @@ pipeline {
                                     --password-stdin
                         '''
 
+
                         if (
                             env.BACKEND_CHANGED == 'true' &&
                             env.BACKEND_SKIP != 'true'
@@ -299,10 +334,12 @@ pipeline {
                                 env.TRIGGER_SHA
                             )
 
+
                             if (result == 'SKIP') {
                                 env.BACKEND_SKIP = 'true'
                             }
                         }
+
 
                         if (
                             env.FRONTEND_CHANGED == 'true' &&
@@ -317,10 +354,12 @@ pipeline {
                                 env.TRIGGER_SHA
                             )
 
+
                             if (result == 'SKIP') {
                                 env.FRONTEND_SKIP = 'true'
                             }
                         }
+
 
                         echo "Backend skip : ${env.BACKEND_SKIP}"
                         echo "Frontend skip: ${env.FRONTEND_SKIP}"
@@ -328,6 +367,7 @@ pipeline {
                 }
             }
         }
+
 
         stage('Build Images') {
             steps {
@@ -338,33 +378,49 @@ pipeline {
                         env.BACKEND_SKIP != 'true'
                     ) {
 
-                        sh """
-                            set -e
+                        withEnv([
+                            "BUILD_IMAGE=${env.BACKEND_IMAGE}",
+                            "BUILD_VERSION=${env.BACKEND_VERSION}",
+                            "BUILD_SHA=${env.SHORT_SHA}"
+                        ]) {
 
-                            docker build \
-                                -t ${BACKEND_IMAGE}:v${BACKEND_VERSION} \
-                                -t ${BACKEND_IMAGE}:sha-${SHORT_SHA} \
-                                ./backend
-                        """
+                            sh '''
+                                set -e
+
+                                docker build \
+                                    -t "$BUILD_IMAGE:v$BUILD_VERSION" \
+                                    -t "$BUILD_IMAGE:sha-$BUILD_SHA" \
+                                    ./backend
+                            '''
+                        }
                     }
+
 
                     if (
                         env.FRONTEND_CHANGED == 'true' &&
                         env.FRONTEND_SKIP != 'true'
                     ) {
 
-                        sh """
-                            set -e
+                        withEnv([
+                            "BUILD_IMAGE=${env.FRONTEND_IMAGE}",
+                            "BUILD_VERSION=${env.FRONTEND_VERSION}",
+                            "BUILD_SHA=${env.SHORT_SHA}"
+                        ]) {
 
-                            docker build \
-                                -t ${FRONTEND_IMAGE}:v${FRONTEND_VERSION} \
-                                -t ${FRONTEND_IMAGE}:sha-${SHORT_SHA} \
-                                ./frontend
-                        """
+                            sh '''
+                                set -e
+
+                                docker build \
+                                    -t "$BUILD_IMAGE:v$BUILD_VERSION" \
+                                    -t "$BUILD_IMAGE:sha-$BUILD_SHA" \
+                                    ./frontend
+                            '''
+                        }
                     }
                 }
             }
         }
+
 
         stage('Push Images') {
             steps {
@@ -375,35 +431,51 @@ pipeline {
                         env.BACKEND_SKIP != 'true'
                     ) {
 
-                        sh """
-                            set -e
+                        withEnv([
+                            "PUSH_IMAGE=${env.BACKEND_IMAGE}",
+                            "PUSH_VERSION=${env.BACKEND_VERSION}",
+                            "PUSH_SHA=${env.SHORT_SHA}"
+                        ]) {
 
-                            docker push \
-                                ${BACKEND_IMAGE}:v${BACKEND_VERSION}
+                            sh '''
+                                set -e
 
-                            docker push \
-                                ${BACKEND_IMAGE}:sha-${SHORT_SHA}
-                        """
+                                docker push \
+                                    "$PUSH_IMAGE:v$PUSH_VERSION"
+
+                                docker push \
+                                    "$PUSH_IMAGE:sha-$PUSH_SHA"
+                            '''
+                        }
                     }
+
 
                     if (
                         env.FRONTEND_CHANGED == 'true' &&
                         env.FRONTEND_SKIP != 'true'
                     ) {
 
-                        sh """
-                            set -e
+                        withEnv([
+                            "PUSH_IMAGE=${env.FRONTEND_IMAGE}",
+                            "PUSH_VERSION=${env.FRONTEND_VERSION}",
+                            "PUSH_SHA=${env.SHORT_SHA}"
+                        ]) {
 
-                            docker push \
-                                ${FRONTEND_IMAGE}:v${FRONTEND_VERSION}
+                            sh '''
+                                set -e
 
-                            docker push \
-                                ${FRONTEND_IMAGE}:sha-${SHORT_SHA}
-                        """
+                                docker push \
+                                    "$PUSH_IMAGE:v$PUSH_VERSION"
+
+                                docker push \
+                                    "$PUSH_IMAGE:sha-$PUSH_SHA"
+                            '''
+                        }
                     }
                 }
             }
         }
+
 
         stage('Create GitHub Tags') {
             steps {
@@ -421,43 +493,57 @@ pipeline {
                             env.BACKEND_SKIP != 'true'
                         ) {
 
-                            sh '''
-                                set -e
-                                set +x
+                            withEnv([
+                                "CREATE_TAG=${env.BACKEND_TAG}",
+                                "CREATE_SHA=${env.TRIGGER_SHA}"
+                            ]) {
 
-                                git -c http.extraheader="AUTHORIZATION: Bearer $GITHUB_TOKEN" \
-                                    tag -a "$BACKEND_TAG" \
-                                    "$TRIGGER_SHA" \
-                                    -m "Release $BACKEND_TAG"
+                                sh '''
+                                    set -e
+                                    set +x
 
-                                git -c http.extraheader="AUTHORIZATION: Bearer $GITHUB_TOKEN" \
-                                    push origin "$BACKEND_TAG"
-                            '''
+                                    git -c http.extraheader="AUTHORIZATION: Bearer $GITHUB_TOKEN" \
+                                        tag -a "$CREATE_TAG" \
+                                        "$CREATE_SHA" \
+                                        -m "Release $CREATE_TAG"
+
+                                    git -c http.extraheader="AUTHORIZATION: Bearer $GITHUB_TOKEN" \
+                                        push origin "$CREATE_TAG"
+                                '''
+                            }
                         }
+
 
                         if (
                             env.FRONTEND_CHANGED == 'true' &&
                             env.FRONTEND_SKIP != 'true'
                         ) {
 
-                            sh '''
-                                set -e
-                                set +x
+                            withEnv([
+                                "CREATE_TAG=${env.FRONTEND_TAG}",
+                                "CREATE_SHA=${env.TRIGGER_SHA}"
+                            ]) {
 
-                                git -c http.extraheader="AUTHORIZATION: Bearer $GITHUB_TOKEN" \
-                                    tag -a "$FRONTEND_TAG" \
-                                    "$TRIGGER_SHA" \
-                                    -m "Release $FRONTEND_TAG"
+                                sh '''
+                                    set -e
+                                    set +x
 
-                                git -c http.extraheader="AUTHORIZATION: Bearer $GITHUB_TOKEN" \
-                                    push origin "$FRONTEND_TAG"
-                            '''
+                                    git -c http.extraheader="AUTHORIZATION: Bearer $GITHUB_TOKEN" \
+                                        tag -a "$CREATE_TAG" \
+                                        "$CREATE_SHA" \
+                                        -m "Release $CREATE_TAG"
+
+                                    git -c http.extraheader="AUTHORIZATION: Bearer $GITHUB_TOKEN" \
+                                        push origin "$CREATE_TAG"
+                                '''
+                            }
                         }
                     }
                 }
             }
         }
     }
+
 
     post {
 
@@ -482,25 +568,25 @@ def findLatestValidTag(
     String triggerSha
 ) {
 
-    /*
-     * Regex doğrudan Groovy string olarak shell'e gönderilmiyor.
-     *
-     * Burada $ karakteri kullanmıyoruz.
-     * grep için sadece başlangıç ve içerik pattern'i yeterli.
-     */
-    def tagPattern =
-        "^${component}/v[0-9]+\\.[0-9]+\\.[0-9]+-sha\\.[0-9a-fA-F]+"
+    def tags = withEnv([
+        "RELEASE_COMPONENT=${component}",
+        "RELEASE_TRIGGER_SHA=${triggerSha}"
+    ]) {
 
-    def tags = sh(
-        script: """
-            set -e
+        sh(
+            script: '''
+                set -e
 
-            git tag --merged '${triggerSha}' --sort=-v:refname |
-            grep -E '${tagPattern}' ||
-            true
-        """,
-        returnStdout: true
-    ).trim()
+                git tag \
+                    --merged "$RELEASE_TRIGGER_SHA" \
+                    --sort=-v:refname |
+                grep -E "^${RELEASE_COMPONENT}/v[0-9]+\\.[0-9]+\\.[0-9]+-sha\\.[0-9a-fA-F]+$" ||
+                true
+            ''',
+            returnStdout: true
+        ).trim()
+    }
+
 
     if (!tags) {
 
@@ -514,6 +600,7 @@ def findLatestValidTag(
         return "${component}/v0.0.0-sha.0000000"
     }
 
+
     for (String tag : tags.split('\n')) {
 
         tag = tag.trim()
@@ -522,18 +609,23 @@ def findLatestValidTag(
             continue
         }
 
+
         def matcher = tag =~
             /^${component}\/v([0-9]+)\.([0-9]+)\.([0-9]+)-sha\.([0-9a-fA-F]+)$/
+
 
         if (!matcher.matches()) {
             continue
         }
 
+
         def tagSha =
             matcher[0][4].toLowerCase()
 
+
         def tagCommit =
             getTagCommit(tag)
+
 
         if (
             !tagCommit
@@ -552,6 +644,7 @@ def findLatestValidTag(
             continue
         }
 
+
         echo """
         Geçerli ${component} release tag bulundu.
 
@@ -560,8 +653,10 @@ def findLatestValidTag(
         Tag SHA    : ${tagSha}
         """
 
+
         return tag
     }
+
 
     echo """
     ${component} için SHA doğrulamasından geçen
@@ -569,6 +664,7 @@ def findLatestValidTag(
 
     İlk release kabul edilecek.
     """
+
 
     return "${component}/v0.0.0-sha.0000000"
 }
@@ -585,14 +681,20 @@ def getTagCommit(String tag) {
         return '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
     }
 
-    return sh(
-        script: """
-            set -e
 
-            git rev-list -n 1 '${tag}'
-        """,
-        returnStdout: true
-    ).trim()
+    return withEnv([
+        "RELEASE_TAG=${tag}"
+    ]) {
+
+        sh(
+            script: '''
+                set -e
+
+                git rev-list -n 1 "$RELEASE_TAG"
+            ''',
+            returnStdout: true
+        ).trim()
+    }
 }
 
 
@@ -607,24 +709,34 @@ def gitDiffExists(
     String componentPath
 ) {
 
-    def result = sh(
-        script: """
-            git diff \
-                --quiet \
-                '${oldCommit}' \
-                '${newCommit}' \
-                -- '${componentPath}'
-        """,
-        returnStatus: true
-    )
+    def result = withEnv([
+        "OLD_COMMIT=${oldCommit}",
+        "NEW_COMMIT=${newCommit}",
+        "COMPONENT_PATH=${componentPath}"
+    ]) {
+
+        sh(
+            script: '''
+                git diff \
+                    --quiet \
+                    "$OLD_COMMIT" \
+                    "$NEW_COMMIT" \
+                    -- "$COMPONENT_PATH"
+            ''',
+            returnStatus: true
+        )
+    }
+
 
     if (result == 0) {
         return false
     }
 
+
     if (result == 1) {
         return true
     }
+
 
     error("""
     Git diff sırasında hata oluştu.
@@ -656,30 +768,24 @@ def checkDockerImage(
      * --------------------------------------------------------------
      * GITHUB TAG KONTROLÜ
      * --------------------------------------------------------------
-     *
-     * Burada özellikle ''' kullanıyoruz.
-     *
-     * Groovy interpolation YOK.
-     *
-     * Dolayısıyla:
-     *
-     * $GITHUB_TOKEN
-     * $GITHUB_TAG
-     *
-     * gibi shell değişkenleri Groovy tarafından parse edilmiyor.
      */
-    def remoteTagOutput = sh(
-        script: '''
-            set -e
-            set +x
+    def remoteTagOutput = withEnv([
+        "CHECK_GITHUB_TAG=${githubTag}"
+    ]) {
 
-            git -c http.extraheader="AUTHORIZATION: Bearer $GITHUB_TOKEN" \
-                ls-remote --tags origin \
-                "refs/tags/$GITHUB_TAG" \
-                "refs/tags/$GITHUB_TAG^{}"
-        ''',
-        returnStdout: true
-    ).trim()
+        sh(
+            script: '''
+                set -e
+                set +x
+
+                git -c http.extraheader="AUTHORIZATION: Bearer $GITHUB_TOKEN" \
+                    ls-remote --tags origin \
+                    "refs/tags/$CHECK_GITHUB_TAG" \
+                    "refs/tags/$CHECK_GITHUB_TAG^{}"
+            ''',
+            returnStdout: true
+        ).trim()
+    }
 
 
     def remoteTagCommit = ''
@@ -691,17 +797,13 @@ def checkDockerImage(
          * ----------------------------------------------------------
          * ANNOTATED TAG
          * ----------------------------------------------------------
-         *
-         * remoteTagOutput'u doğrudan Groovy string içine koymuyoruz.
-         *
-         * withEnv ile shell environment'ına gönderiyoruz.
          */
-        withEnv([
+        remoteTagCommit = withEnv([
             "REMOTE_TAG_OUTPUT=${remoteTagOutput}",
             "EXPECTED_GITHUB_TAG=${githubTag}"
         ]) {
 
-            remoteTagCommit = sh(
+            sh(
                 script: '''
                     set -e
 
@@ -721,12 +823,12 @@ def checkDockerImage(
          */
         if (!remoteTagCommit) {
 
-            withEnv([
+            remoteTagCommit = withEnv([
                 "REMOTE_TAG_OUTPUT=${remoteTagOutput}",
                 "EXPECTED_GITHUB_TAG=${githubTag}"
             ]) {
 
-                remoteTagCommit = sh(
+                sh(
                     script: '''
                         set -e
 
@@ -779,14 +881,20 @@ def checkDockerImage(
      * VERSION IMAGE VAR MI?
      * --------------------------------------------------------------
      */
-    def versionExists = sh(
-        script: """
-            docker manifest inspect \
-                ${image}:v${version} \
-                >/dev/null 2>&1
-        """,
-        returnStatus: true
-    ) == 0
+    def versionExists = withEnv([
+        "CHECK_IMAGE=${image}",
+        "CHECK_VERSION=${version}"
+    ]) {
+
+        sh(
+            script: '''
+                docker manifest inspect \
+                    "$CHECK_IMAGE:v$CHECK_VERSION" \
+                    >/dev/null 2>&1
+            ''',
+            returnStatus: true
+        ) == 0
+    }
 
 
     /*
@@ -842,17 +950,23 @@ def checkDockerImage(
      * VERSION IMAGE DIGEST
      * --------------------------------------------------------------
      */
-    def versionDigest = sh(
-        script: """
-            set -e
+    def versionDigest = withEnv([
+        "CHECK_IMAGE=${image}",
+        "CHECK_VERSION=${version}"
+    ]) {
 
-            docker buildx imagetools inspect \
-                ${image}:v${version} |
-            grep -m 1 '^Digest:' |
-            awk '{print \\$2}'
-        """,
-        returnStdout: true
-    ).trim()
+        sh(
+            script: '''
+                set -e
+
+                docker buildx imagetools inspect \
+                    "$CHECK_IMAGE:v$CHECK_VERSION" |
+                grep -m 1 '^Digest:' |
+                awk '{print $2}'
+            ''',
+            returnStdout: true
+        ).trim()
+    }
 
 
     if (!versionDigest) {
@@ -871,22 +985,28 @@ def checkDockerImage(
      * SHA IMAGE DIGEST
      * --------------------------------------------------------------
      */
-    def shaDigest = sh(
-        script: """
-            set -e
+    def shaDigest = withEnv([
+        "CHECK_IMAGE=${image}",
+        "CHECK_SHA=${sha}"
+    ]) {
 
-            docker buildx imagetools inspect \
-                ${image}:sha-${sha} 2>/dev/null |
-            grep -m 1 '^Digest:' |
-            awk '{print \\$2}' ||
-            true
-        """,
-        returnStdout: true
-    ).trim()
+        sh(
+            script: '''
+                docker buildx imagetools inspect \
+                    "$CHECK_IMAGE:sha-$CHECK_SHA" 2>/dev/null |
+                grep -m 1 '^Digest:' |
+                awk '{print $2}' ||
+                true
+            ''',
+            returnStdout: true
+        ).trim()
+    }
 
 
     /*
-     * Version var + SHA yok.
+     * --------------------------------------------------------------
+     * VERSION VAR + SHA YOK
+     * --------------------------------------------------------------
      */
     if (!shaDigest) {
 
