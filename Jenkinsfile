@@ -997,6 +997,7 @@ Frontend:
     }
 }
 
+
 stage('12 - Docker Image Build') {
     steps {
         script {
@@ -1152,4 +1153,5 @@ ${env.FRONTEND_FULL_TAG ?: 'N/A'}
 ========================================
 """
     }
+}
 }
