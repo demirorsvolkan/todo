@@ -1121,6 +1121,7 @@ stage('14 - Create GitHub Tags') {
         }
     }
 }
+}
 
 post {
     always {
