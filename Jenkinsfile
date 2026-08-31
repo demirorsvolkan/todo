@@ -289,33 +289,45 @@ Docker image oluşturulmayacak.
         }
 
 
+
+
 stage('11 - Calculate Next Versions') {
     steps {
         script {
 
             /*
-             * Conventional Commit rules
+             * =========================================================
+             * Conventional Commit Version Rules
+             * =========================================================
              *
-             * fix: ...              -> PATCH
-             * fix(scope): ...       -> PATCH
+             * fix: something
+             * fix(api): something
+             *                         -> PATCH
              *
-             * feat: ...             -> MINOR
-             * feat(scope): ...      -> MINOR
+             * feat: something
+             * feat(api): something
+             *                         -> MINOR
              *
-             * feat!: ...            -> MAJOR
-             * feat(scope)!: ...     -> MAJOR
+             * feat!: something
+             * feat(api)!: something
+             * fix!: something
+             *                         -> MAJOR
              *
-             * BREAKING CHANGE: ...  -> MAJOR
-             * BREAKING-CHANGE: ...  -> MAJOR
+             * BREAKING CHANGE: something
+             * BREAKING-CHANGE: something
+             *                         -> MAJOR
              *
              * Priority:
+             *
              * MAJOR > MINOR > PATCH
+             *
+             * =========================================================
              */
 
 
-            // ---------------------------------------------------------
+            // =========================================================
             // BACKEND
-            // ---------------------------------------------------------
+            // =========================================================
 
             if (env.BACKEND_CHANGED == 'true') {
 
@@ -337,7 +349,12 @@ stage('11 - Calculate Next Versions') {
                     int patch = match[0][3] as int
 
 
-                    // Son backend tag'ından beri gelen commit'leri al.
+                    // -------------------------------------------------
+                    // Backend commit mesajlarını al
+                    // Son backend tag'ından mevcut commit'e kadar
+                    // SADECE backend dizinine dokunan commitler.
+                    // -------------------------------------------------
+
                     def backendCommits = sh(
                         script: """
                             git log \
@@ -351,74 +368,103 @@ stage('11 - Calculate Next Versions') {
 
                     echo """
 ========== BACKEND COMMITS SINCE LAST TAG ==========
+
 ${backendCommits ?: 'Commit bulunamadı.'}
+
+=====================================================
 """
+
+
+                    // -------------------------------------------------
+                    // Regex patternleri
+                    // String olarak tanımlıyoruz.
+                    // Böylece Jenkins Groovy parser problemlerinden
+                    // kaçınıyoruz.
+                    // -------------------------------------------------
+
+                    def majorCommitPattern =
+                        '(?m)^(feat|fix|refactor|perf|chore|docs|style|test|build|ci)(\\([^)]*\\))?!:'
+
+                    def breakingChangePattern =
+                        '(?m)^BREAKING[ -]CHANGE[ ]*:'
+
+                    def minorCommitPattern =
+                        '(?m)^feat(\\([^)]*\\))?:'
+
+                    def patchCommitPattern =
+                        '(?m)^fix(\\([^)]*\\))?:'
 
 
                     String backendBump = 'patch'
 
 
-                    if (backendCommits) {
+                    // -------------------------------------------------
+                    // MAJOR
+                    // -------------------------------------------------
 
-                        /*
-                         * Önce MAJOR kontrol ediyoruz.
-                         *
-                         * Örneğin:
-                         * feat!: ...
-                         * feat(api)!: ...
-                         * fix!: ...
-                         * BREAKING CHANGE: ...
-                         * BREAKING-CHANGE: ...
-                         */
+                    if (
+                        backendCommits.find(majorCommitPattern) ||
+                        backendCommits.find(breakingChangePattern)
+                    ) {
 
-                        if (
-                            backendCommits =~
-                                /(?m)^(?:feat|fix|refactor|perf|chore|docs|style|test|build|ci)(?:\([^)\r\n]+\))?!:/ ||
-                            backendCommits =~
-                                /(?m)^BREAKING[ -]CHANGE\s*:/
-                        ) {
-                            backendBump = 'major'
+                        backendBump = 'major'
 
-                        /*
-                         * MAJOR yoksa MINOR kontrol ediyoruz.
-                         */
-                        } else if (
-                            backendCommits =~
-                                /(?m)^feat(?:\([^)\r\n]+\))?:/
-                        ) {
-                            backendBump = 'minor'
 
-                        /*
-                         * MINOR da yoksa PATCH kontrol ediyoruz.
-                         */
-                        } else if (
-                            backendCommits =~
-                                /(?m)^fix(?:\([^)\r\n]+\))?:/
-                        ) {
-                            backendBump = 'patch'
-                        }
+                    // -------------------------------------------------
+                    // MINOR
+                    // -------------------------------------------------
+
+                    } else if (
+                        backendCommits.find(minorCommitPattern)
+                    ) {
+
+                        backendBump = 'minor'
+
+
+                    // -------------------------------------------------
+                    // PATCH
+                    // -------------------------------------------------
+
+                    } else if (
+                        backendCommits.find(patchCommitPattern)
+                    ) {
+
+                        backendBump = 'patch'
                     }
 
 
                     echo "Backend version bump: ${backendBump.toUpperCase()}"
 
 
+                    // -------------------------------------------------
+                    // Version artır
+                    // -------------------------------------------------
+
                     switch (backendBump) {
 
                         case 'major':
+
                             major++
                             minor = 0
                             patch = 0
+
                             break
+
 
                         case 'minor':
+
                             minor++
                             patch = 0
+
                             break
 
+
                         case 'patch':
+
                         default:
+
                             patch++
+
                             break
                     }
 
@@ -436,6 +482,10 @@ ${backendCommits ?: 'Commit bulunamadı.'}
                 }
 
 
+                // -----------------------------------------------------
+                // Backend Docker / Git tag değerleri
+                // -----------------------------------------------------
+
                 env.BACKEND_FULL_TAG =
                     "backend/${env.BACKEND_VERSION}-sha.${env.CURRENT_SHORT_SHA}"
 
@@ -447,9 +497,9 @@ ${backendCommits ?: 'Commit bulunamadı.'}
             }
 
 
-            // ---------------------------------------------------------
+            // =========================================================
             // FRONTEND
-            // ---------------------------------------------------------
+            // =========================================================
 
             if (env.FRONTEND_CHANGED == 'true') {
 
@@ -471,7 +521,12 @@ ${backendCommits ?: 'Commit bulunamadı.'}
                     int patch = match[0][3] as int
 
 
-                    // Son frontend tag'ından beri gelen commit'leri al.
+                    // -------------------------------------------------
+                    // Frontend commit mesajlarını al
+                    // Son frontend tag'ından mevcut commit'e kadar
+                    // SADECE frontend dizinine dokunan commitler.
+                    // -------------------------------------------------
+
                     def frontendCommits = sh(
                         script: """
                             git log \
@@ -485,60 +540,100 @@ ${backendCommits ?: 'Commit bulunamadı.'}
 
                     echo """
 ========== FRONTEND COMMITS SINCE LAST TAG ==========
+
 ${frontendCommits ?: 'Commit bulunamadı.'}
+
+======================================================
 """
+
+
+                    // -------------------------------------------------
+                    // Regex patternleri
+                    // -------------------------------------------------
+
+                    def majorCommitPattern =
+                        '(?m)^(feat|fix|refactor|perf|chore|docs|style|test|build|ci)(\\([^)]*\\))?!:'
+
+                    def breakingChangePattern =
+                        '(?m)^BREAKING[ -]CHANGE[ ]*:'
+
+                    def minorCommitPattern =
+                        '(?m)^feat(\\([^)]*\\))?:'
+
+                    def patchCommitPattern =
+                        '(?m)^fix(\\([^)]*\\))?:'
 
 
                     String frontendBump = 'patch'
 
 
-                    if (frontendCommits) {
+                    // -------------------------------------------------
+                    // MAJOR
+                    // -------------------------------------------------
 
-                        // MAJOR
-                        if (
-                            frontendCommits =~
-                                /(?m)^(?:feat|fix|refactor|perf|chore|docs|style|test|build|ci)(?:\([^)\r\n]+\))?!:/ ||
-                            frontendCommits =~
-                                /(?m)^BREAKING[ -]CHANGE\s*:/
-                        ) {
-                            frontendBump = 'major'
+                    if (
+                        frontendCommits.find(majorCommitPattern) ||
+                        frontendCommits.find(breakingChangePattern)
+                    ) {
 
-                        // MINOR
-                        } else if (
-                            frontendCommits =~
-                                /(?m)^feat(?:\([^)\r\n]+\))?:/
-                        ) {
-                            frontendBump = 'minor'
+                        frontendBump = 'major'
 
-                        // PATCH
-                        } else if (
-                            frontendCommits =~
-                                /(?m)^fix(?:\([^)\r\n]+\))?:/
-                        ) {
-                            frontendBump = 'patch'
-                        }
+
+                    // -------------------------------------------------
+                    // MINOR
+                    // -------------------------------------------------
+
+                    } else if (
+                        frontendCommits.find(minorCommitPattern)
+                    ) {
+
+                        frontendBump = 'minor'
+
+
+                    // -------------------------------------------------
+                    // PATCH
+                    // -------------------------------------------------
+
+                    } else if (
+                        frontendCommits.find(patchCommitPattern)
+                    ) {
+
+                        frontendBump = 'patch'
                     }
 
 
                     echo "Frontend version bump: ${frontendBump.toUpperCase()}"
 
 
+                    // -------------------------------------------------
+                    // Version artır
+                    // -------------------------------------------------
+
                     switch (frontendBump) {
 
                         case 'major':
+
                             major++
                             minor = 0
                             patch = 0
+
                             break
+
 
                         case 'minor':
+
                             minor++
                             patch = 0
+
                             break
 
+
                         case 'patch':
+
                         default:
+
                             patch++
+
                             break
                     }
 
@@ -556,6 +651,10 @@ ${frontendCommits ?: 'Commit bulunamadı.'}
                 }
 
 
+                // -----------------------------------------------------
+                // Frontend Docker / Git tag değerleri
+                // -----------------------------------------------------
+
                 env.FRONTEND_FULL_TAG =
                     "frontend/${env.FRONTEND_VERSION}-sha.${env.CURRENT_SHORT_SHA}"
 
@@ -566,6 +665,10 @@ ${frontendCommits ?: 'Commit bulunamadı.'}
                     "sha-${env.CURRENT_SHORT_SHA}"
             }
 
+
+            // =========================================================
+            // RESULT
+            // =========================================================
 
             echo """
 ========== NEXT VERSIONS ==========
@@ -583,6 +686,7 @@ Frontend:
         }
     }
 }
+
 
 
 
