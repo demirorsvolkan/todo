@@ -290,32 +290,40 @@ Docker image oluşturulmayacak.
 
 
 
+
 stage('11 - Calculate Next Versions') {
     steps {
         script {
 
             /*
-             * Version bump:
+             * =========================================================
+             * CONVENTIONAL COMMIT VERSIONING
+             * =========================================================
              *
-             * fix:              PATCH
-             * fix(scope):       PATCH
+             * fix: ...                 -> PATCH
+             * fix(scope): ...          -> PATCH
              *
-             * feat:             MINOR
-             * feat(scope):      MINOR
+             * feat: ...                -> MINOR
+             * feat(scope): ...         -> MINOR
              *
-             * feat!:            MAJOR
-             * feat(scope)!:     MAJOR
+             * feat!: ...               -> MAJOR
+             * feat(scope)!: ...        -> MAJOR
              *
-             * Any supported type with ! -> MAJOR
-             *
-             * BREAKING CHANGE:   MAJOR
-             * BREAKING-CHANGE:   MAJOR
+             * BREAKING CHANGE: ...     -> MAJOR
+             * BREAKING-CHANGE: ...     -> MAJOR
              *
              * Priority:
+             *
              * MAJOR > MINOR > PATCH
              *
              * Only commits after the last component tag are examined.
-             * Path is filtered separately for backend/frontend.
+             *
+             * Backend:
+             *     BASE..CURRENT -- backend
+             *
+             * Frontend:
+             *     BASE..CURRENT -- frontend
+             * =========================================================
              */
 
 
@@ -327,46 +335,60 @@ stage('11 - Calculate Next Versions') {
 
                 if (env.BACKEND_TAG?.trim()) {
 
-                    def backendRegex =
-                        '^backend/v([0-9]+)\\.([0-9]+)\\.([0-9]+)-sha\\.([0-9a-fA-F]+)$'
+                    /*
+                     * Tag örneği:
+                     *
+                     * backend/v1.4.7-sha.abc1234
+                     *
+                     * Matcher kullanmıyoruz.
+                     * Jenkins Pipeline'da Matcher serialize problemi
+                     * yaşamamak için String işlemleri kullanıyoruz.
+                     */
 
-                    if (!env.BACKEND_TAG.matches(backendRegex)) {
+                    def backendTagVersion =
+                        env.BACKEND_TAG
+                            .replaceFirst(/^backend\//, '')
+                            .replaceFirst(/-sha\..*$/, '')
+
+                    /*
+                     * backendTagVersion:
+                     *
+                     * v1.4.7
+                     */
+
+                    if (!backendTagVersion.startsWith('v')) {
                         error(
                             "Geçersiz backend tag formatı: ${env.BACKEND_TAG}"
                         )
                     }
 
-                    def backendMatch =
-                        env.BACKEND_TAG =~ backendRegex
+                    def backendVersionParts =
+                        backendTagVersion
+                            .substring(1)
+                            .split('\\.')
+
+                    if (backendVersionParts.size() != 3) {
+                        error(
+                            "Geçersiz backend version formatı: ${env.BACKEND_TAG}"
+                        )
+                    }
 
                     int major =
-                        backendMatch[0][1] as int
+                        backendVersionParts[0] as int
 
                     int minor =
-                        backendMatch[0][2] as int
+                        backendVersionParts[1] as int
 
                     int patch =
-                        backendMatch[0][3] as int
+                        backendVersionParts[2] as int
 
 
-                    /*
-                     * Son backend tag'ından CURRENT_SHA'ya kadar
-                     * sadece backend/ altında değişiklik yapan
-                     * commitlerin mesajlarını al.
-                     *
-                     * %s = commit subject
-                     * %b = commit body
-                     *
-                     * Her commit:
-                     *
-                     * SUBJECT
-                     * BODY
-                     * ---
-                     *
-                     * şeklinde gelir.
-                     */
+                    // -------------------------------------------------
+                    // Son backend tag'ından beri backend'e dokunan
+                    // commitlerin subject + body bilgilerini al.
+                    // -------------------------------------------------
 
-                    def backendCommitMessages = sh(
+                    def backendCommits = sh(
                         script: """
                             git log \
                                 --format='%s%n%b%n---COMMIT-END---' \
@@ -380,69 +402,61 @@ stage('11 - Calculate Next Versions') {
                     echo """
 ========== BACKEND COMMITS SINCE LAST TAG ==========
 
-${backendCommitMessages ?: 'Commit bulunamadı.'}
+${backendCommits ?: 'Commit bulunamadı.'}
 
 =====================================================
 """
 
 
+                    /*
+                     * -------------------------------------------------
+                     * Version bump
+                     * -------------------------------------------------
+                     */
+
                     String backendBump = 'patch'
 
 
-                    if (backendCommitMessages) {
+                    if (backendCommits) {
 
                         /*
-                         * MAJOR
+                         * MAJOR kontrolü
+                         *
+                         * !:
                          *
                          * feat!:
-                         * feat(scope)!:
+                         * feat(api)!:
                          * fix!:
                          * refactor!:
-                         * vb.
+                         *
+                         * Ayrıca:
+                         *
+                         * BREAKING CHANGE:
+                         * BREAKING-CHANGE:
                          */
-
-                        def majorPattern =
-                            '(?m)^(feat|fix|refactor|perf|chore|docs|style|test|build|ci)(\\([^)]*\\))?!:'
-
-                        /*
-                         * BREAKING CHANGE body
-                         */
-
-                        def breakingPattern =
-                            '(?m)^BREAKING[ -]CHANGE[ ]*:'
-
-
-                        /*
-                         * MINOR
-                         */
-
-                        def minorPattern =
-                            '(?m)^feat(\\([^)]*\\))?:'
-
-
-                        /*
-                         * PATCH
-                         */
-
-                        def patchPattern =
-                            '(?m)^fix(\\([^)]*\\))?:'
-
 
                         if (
-                            backendCommitMessages.find(majorPattern) ||
-                            backendCommitMessages.find(breakingPattern)
+                            backendCommits =~ /(?m)^(feat|fix|refactor|perf|chore|docs|style|test|build|ci)(\([^)]*\))?!:/ ||
+                            backendCommits =~ /(?m)^BREAKING[ -]CHANGE[ ]*:/
                         ) {
+
+                            /*
+                             * ÖNEMLİ:
+                             *
+                             * Matcher'ı değişkende tutmuyoruz.
+                             * Sadece boolean sonucu kullanıyoruz.
+                             */
 
                             backendBump = 'major'
 
                         } else if (
-                            backendCommitMessages.find(minorPattern)
+                            backendCommits ==~ /(?s).*^(feat)(\([^)]*\))?:.*$/
                         ) {
 
                             backendBump = 'minor'
 
                         } else if (
-                            backendCommitMessages.find(patchPattern)
+                            backendCommits ==~ /(?s).*^(fix)(\([^)]*\))?:.*$/
                         ) {
 
                             backendBump = 'patch'
@@ -482,6 +496,9 @@ Bump: ${backendBump.toUpperCase()}
 
                 } else {
 
+                    /*
+                     * İlk backend release
+                     */
                     env.BACKEND_VERSION = 'v1.0.0'
                 }
 
@@ -505,35 +522,52 @@ Bump: ${backendBump.toUpperCase()}
 
                 if (env.FRONTEND_TAG?.trim()) {
 
-                    def frontendRegex =
-                        '^frontend/v([0-9]+)\\.([0-9]+)\\.([0-9]+)-sha\\.([0-9a-fA-F]+)$'
+                    /*
+                     * Örnek:
+                     *
+                     * frontend/v2.3.4-sha.abc1234
+                     *
+                     * Matcher kullanmıyoruz.
+                     */
 
-                    if (!env.FRONTEND_TAG.matches(frontendRegex)) {
+                    def frontendTagVersion =
+                        env.FRONTEND_TAG
+                            .replaceFirst(/^frontend\//, '')
+                            .replaceFirst(/-sha\..*$/, '')
+
+                    if (!frontendTagVersion.startsWith('v')) {
                         error(
                             "Geçersiz frontend tag formatı: ${env.FRONTEND_TAG}"
                         )
                     }
 
-                    def frontendMatch =
-                        env.FRONTEND_TAG =~ frontendRegex
+                    def frontendVersionParts =
+                        frontendTagVersion
+                            .substring(1)
+                            .split('\\.')
+
+                    if (frontendVersionParts.size() != 3) {
+                        error(
+                            "Geçersiz frontend version formatı: ${env.FRONTEND_TAG}"
+                        )
+                    }
 
                     int major =
-                        frontendMatch[0][1] as int
+                        frontendVersionParts[0] as int
 
                     int minor =
-                        frontendMatch[0][2] as int
+                        frontendVersionParts[1] as int
 
                     int patch =
-                        frontendMatch[0][3] as int
+                        frontendVersionParts[2] as int
 
 
-                    /*
-                     * Son frontend tag'ından CURRENT_SHA'ya kadar
-                     * sadece frontend/ altında değişiklik yapan
-                     * commitlerin mesajlarını al.
-                     */
+                    // -------------------------------------------------
+                    // Son frontend tag'ından beri frontend'e dokunan
+                    // commitlerin subject + body bilgilerini al.
+                    // -------------------------------------------------
 
-                    def frontendCommitMessages = sh(
+                    def frontendCommits = sh(
                         script: """
                             git log \
                                 --format='%s%n%b%n---COMMIT-END---' \
@@ -547,7 +581,7 @@ Bump: ${backendBump.toUpperCase()}
                     echo """
 ========== FRONTEND COMMITS SINCE LAST TAG ==========
 
-${frontendCommitMessages ?: 'Commit bulunamadı.'}
+${frontendCommits ?: 'Commit bulunamadı.'}
 
 ======================================================
 """
@@ -556,55 +590,27 @@ ${frontendCommitMessages ?: 'Commit bulunamadı.'}
                     String frontendBump = 'patch'
 
 
-                    if (frontendCommitMessages) {
+                    if (frontendCommits) {
 
                         /*
                          * MAJOR
                          */
 
-                        def majorPattern =
-                            '(?m)^(feat|fix|refactor|perf|chore|docs|style|test|build|ci)(\\([^)]*\\))?!:'
-
-
-                        /*
-                         * BREAKING CHANGE
-                         */
-
-                        def breakingPattern =
-                            '(?m)^BREAKING[ -]CHANGE[ ]*:'
-
-
-                        /*
-                         * MINOR
-                         */
-
-                        def minorPattern =
-                            '(?m)^feat(\\([^)]*\\))?:'
-
-
-                        /*
-                         * PATCH
-                         */
-
-                        def patchPattern =
-                            '(?m)^fix(\\([^)]*\\))?:'
-
-
                         if (
-                            frontendCommitMessages.find(majorPattern) ||
-                            frontendCommitMessages.find(breakingPattern)
+                            frontendCommits =~ /(?m)^(feat|fix|refactor|perf|chore|docs|style|test|build|ci)(\([^)]*\))?!:/ ||
+                            frontendCommits =~ /(?m)^BREAKING[ -]CHANGE[ ]*:/
                         ) {
 
                             frontendBump = 'major'
 
                         } else if (
-                            frontendCommitMessages.find(minorPattern)
+                            frontendCommits ==~ /(?s).*^(feat)(\([^)]*\))?:.*$/
                         ) {
 
                             frontendBump = 'minor'
 
                         } else if (
-                            frontendCommitMessages.find(patchPattern)
+                            frontendCommits ==~ /(?s).*^(fix)(\([^)]*\))?:.*$/
                         ) {
 
                             frontendBump = 'patch'
@@ -644,6 +650,9 @@ Bump: ${frontendBump.toUpperCase()}
 
                 } else {
 
+                    /*
+                     * İlk frontend release
+                     */
                     env.FRONTEND_VERSION = 'v1.0.0'
                 }
 
@@ -679,6 +688,7 @@ Frontend:
         }
     }
 }
+
 
 
 
