@@ -300,29 +300,58 @@ stage('11 - Calculate Next Versions') {
              * CONVENTIONAL COMMIT VERSIONING
              * =========================================================
              *
-             * fix: ...                 -> PATCH
-             * fix(scope): ...          -> PATCH
+             * MAJOR
+             *   feat!:
+             *   fix!:
+             *   refactor!:
+             *   perf!:
+             *   chore!:
+             *   docs!:
+             *   test!:
+             *   ci!:
+             *   build!:
+             *   style!:
+             *   BREAKING CHANGE:
+             *   BREAKING-CHANGE:
              *
-             * feat: ...                -> MINOR
-             * feat(scope): ...         -> MINOR
+             * MINOR
+             *   feat:
+             *   feat(scope):
              *
-             * feat!: ...               -> MAJOR
-             * feat(scope)!: ...        -> MAJOR
+             * PATCH
+             *   fix:
+             *   fix(scope):
+             *   perf:
+             *   perf(scope):
              *
-             * BREAKING CHANGE: ...     -> MAJOR
-             * BREAKING-CHANGE: ...     -> MAJOR
+             * NO RELEASE
+             *   chore:
+             *   docs:
+             *   refactor:
+             *   test:
+             *   ci:
+             *   build:
+             *   style:
+             *   unknown / invalid commit
              *
              * Priority:
              *
-             * MAJOR > MINOR > PATCH
+             *   MAJOR > MINOR > PATCH > NONE
+             *
+             * IMPORTANT:
              *
              * Only commits after the last component tag are examined.
              *
              * Backend:
-             *     BASE..CURRENT -- backend
+             *   BACKEND_BASE_SHA..CURRENT_SHA -- backend
              *
              * Frontend:
-             *     BASE..CURRENT -- frontend
+             *   FRONTEND_BASE_SHA..CURRENT_SHA -- frontend
+             *
+             * --first-parent kullanılmaz.
+             * Böylece merge commitlerinin arkasındaki gerçek commitler
+             * de version hesabına dahil edilir.
+             *
              * =========================================================
              */
 
@@ -333,28 +362,24 @@ stage('11 - Calculate Next Versions') {
 
             if (env.BACKEND_CHANGED == 'true') {
 
+                env.BACKEND_RELEASE = 'false'
+
                 if (env.BACKEND_TAG?.trim()) {
 
                     /*
-                     * Tag örneği:
+                     * -------------------------------------------------
+                     * Parse backend version
+                     * -------------------------------------------------
                      *
                      * backend/v1.4.7-sha.abc1234
-                     *
-                     * Matcher kullanmıyoruz.
-                     * Jenkins Pipeline'da Matcher serialize problemi
-                     * yaşamamak için String işlemleri kullanıyoruz.
+                     *              ↓
+                     * v1.4.7
                      */
 
                     def backendTagVersion =
                         env.BACKEND_TAG
                             .replaceFirst(/^backend\//, '')
                             .replaceFirst(/-sha\..*$/, '')
-
-                    /*
-                     * backendTagVersion:
-                     *
-                     * v1.4.7
-                     */
 
                     if (!backendTagVersion.startsWith('v')) {
                         error(
@@ -384,14 +409,19 @@ stage('11 - Calculate Next Versions') {
 
 
                     // -------------------------------------------------
-                    // Son backend tag'ından beri backend'e dokunan
-                    // commitlerin subject + body bilgilerini al.
+                    // Commitleri al
+                    //
+                    // Format:
+                    //
+                    // HASH<TAB>SUBJECT
+                    //
+                    // Body ayrıca ayrı bir komutla kontrol edilecek.
                     // -------------------------------------------------
 
-                    def backendCommits = sh(
+                    def backendCommitData = sh(
                         script: """
                             git log \
-                                --format='%s%n%b%n---COMMIT-END---' \
+                                --format='%H%x09%s' \
                                 '${env.BACKEND_BASE_SHA}..${env.CURRENT_SHA}' \
                                 -- '${env.BACKEND_DIR}'
                         """,
@@ -402,65 +432,155 @@ stage('11 - Calculate Next Versions') {
                     echo """
 ========== BACKEND COMMITS SINCE LAST TAG ==========
 
-${backendCommits ?: 'Commit bulunamadı.'}
+${backendCommitData ?: 'Commit bulunamadı.'}
 
 =====================================================
 """
 
 
-                    /*
-                     * -------------------------------------------------
-                     * Version bump
-                     * -------------------------------------------------
-                     */
-
-                    String backendBump = 'patch'
+                    String backendBump = 'none'
 
 
-                    if (backendCommits) {
+                    if (backendCommitData) {
 
                         /*
-                         * MAJOR kontrolü
-                         *
-                         * !:
-                         *
-                         * feat!:
-                         * feat(api)!:
-                         * fix!:
-                         * refactor!:
-                         *
-                         * Ayrıca:
-                         *
-                         * BREAKING CHANGE:
-                         * BREAKING-CHANGE:
+                         * -------------------------------------------------
+                         * Commitleri tek tek değerlendir
+                         * -------------------------------------------------
                          */
 
-                        if (
-                            backendCommits =~ /(?m)^(feat|fix|refactor|perf|chore|docs|style|test|build|ci)(\([^)]*\))?!:/ ||
-                            backendCommits =~ /(?m)^BREAKING[ -]CHANGE[ ]*:/
-                        ) {
+                        backendCommitData
+                            .split('\n')
+                            .each { line ->
 
-                            /*
-                             * ÖNEMLİ:
-                             *
-                             * Matcher'ı değişkende tutmuyoruz.
-                             * Sadece boolean sonucu kullanıyoruz.
-                             */
+                                if (!line?.trim()) {
+                                    return
+                                }
 
-                            backendBump = 'major'
+                                def separatorIndex =
+                                    line.indexOf('\t')
 
-                        } else if (
-                            backendCommits ==~ /(?s).*^(feat)(\([^)]*\))?:.*$/
-                        ) {
+                                if (separatorIndex < 0) {
+                                    return
+                                }
 
-                            backendBump = 'minor'
+                                def commitSha =
+                                    line.substring(
+                                        0,
+                                        separatorIndex
+                                    ).trim()
 
-                        } else if (
-                            backendCommits ==~ /(?s).*^(fix)(\([^)]*\))?:.*$/
-                        ) {
+                                def commitSubject =
+                                    line.substring(
+                                        separatorIndex + 1
+                                    ).trim()
 
-                            backendBump = 'patch'
-                        }
+
+                                /*
+                                 * -------------------------------------------------
+                                 * Commit body
+                                 * -------------------------------------------------
+                                 *
+                                 * BREAKING CHANGE body içerisinde bulunabilir.
+                                 */
+
+                                def commitBody = sh(
+                                    script: """
+                                        git show -s \
+                                            --format='%b' \
+                                            '${commitSha}'
+                                    """,
+                                    returnStdout: true
+                                ).trim()
+
+
+                                String commitBump = 'none'
+
+
+                                /*
+                                 * =================================================
+                                 * MAJOR
+                                 * =================================================
+                                 */
+
+                                if (
+                                    commitSubject ==~ /^(feat|fix|refactor|perf|chore|docs|test|ci|build|style)(\\([^)]*\\))?!:.*$/
+                                ) {
+
+                                    commitBump = 'major'
+
+                                } else if (
+                                    commitBody.contains('BREAKING CHANGE:') ||
+                                    commitBody.contains('BREAKING-CHANGE:')
+                                ) {
+
+                                    commitBump = 'major'
+
+
+                                /*
+                                 * =================================================
+                                 * MINOR
+                                 * =================================================
+                                 */
+
+                                } else if (
+                                    commitSubject ==~ /^feat(\\([^)]*\\))?:.*$/
+                                ) {
+
+                                    commitBump = 'minor'
+
+
+                                /*
+                                 * =================================================
+                                 * PATCH
+                                 * =================================================
+                                 */
+
+                                } else if (
+                                    commitSubject ==~ /^fix(\\([^)]*\\))?:.*$/ ||
+                                    commitSubject ==~ /^perf(\\([^)]*\\))?:.*$/
+                                ) {
+
+                                    commitBump = 'patch'
+                                }
+
+
+                                echo """
+Backend commit:
+  SHA     : ${commitSha}
+  Subject : ${commitSubject}
+  Bump    : ${commitBump.toUpperCase()}
+"""
+
+
+                                /*
+                                 * -------------------------------------------------
+                                 * MAXIMUM BUMP
+                                 * -------------------------------------------------
+                                 *
+                                 * MAJOR > MINOR > PATCH > NONE
+                                 * -------------------------------------------------
+                                 */
+
+                                if (commitBump == 'major') {
+
+                                    backendBump = 'major'
+
+                                } else if (
+                                    commitBump == 'minor' &&
+                                    backendBump != 'major'
+                                ) {
+
+                                    backendBump = 'minor'
+
+                                } else if (
+                                    commitBump == 'patch' &&
+                                    backendBump == 'none'
+                                ) {
+
+                                    backendBump = 'patch'
+                                }
+                            }
                     }
 
 
@@ -471,46 +591,88 @@ Bump: ${backendBump.toUpperCase()}
 """
 
 
-                    switch (backendBump) {
+                    /*
+                     * -------------------------------------------------
+                     * NO RELEASE
+                     * -------------------------------------------------
+                     */
 
-                        case 'major':
-                            major++
-                            minor = 0
-                            patch = 0
-                            break
+                    if (backendBump == 'none') {
 
-                        case 'minor':
-                            minor++
-                            patch = 0
-                            break
+                        env.BACKEND_RELEASE = 'false'
 
-                        case 'patch':
-                        default:
-                            patch++
-                            break
+                        echo """
+========== BACKEND RELEASE ==========
+NO BUILD / NO RELEASE
+
+Backend path değişmiş olsa bile
+release gerektiren Conventional Commit bulunamadı.
+
+=====================================
+"""
+
+                    } else {
+
+                        env.BACKEND_RELEASE = 'true'
+
+
+                        switch (backendBump) {
+
+                            case 'major':
+                                major++
+                                minor = 0
+                                patch = 0
+                                break
+
+                            case 'minor':
+                                minor++
+                                patch = 0
+                                break
+
+                            case 'patch':
+                                patch++
+                                break
+                        }
+
+
+                        env.BACKEND_VERSION =
+                            "v${major}.${minor}.${patch}"
+
+
+                        env.BACKEND_FULL_TAG =
+                            "backend/${env.BACKEND_VERSION}-sha.${env.CURRENT_SHORT_SHA}"
+
+                        env.BACKEND_DOCKER_VERSION_TAG =
+                            env.BACKEND_VERSION
+
+                        env.BACKEND_DOCKER_SHA_TAG =
+                            "sha-${env.CURRENT_SHORT_SHA}"
                     }
-
-
-                    env.BACKEND_VERSION =
-                        "v${major}.${minor}.${patch}"
 
                 } else {
 
                     /*
+                     * -------------------------------------------------
                      * İlk backend release
+                     * -------------------------------------------------
+                     *
+                     * Burada backend değişikliği bulunduğu için
+                     * ilk release v1.0.0 olarak oluşturulur.
                      */
+
+                    env.BACKEND_RELEASE = 'true'
+
                     env.BACKEND_VERSION = 'v1.0.0'
+
+                    env.BACKEND_FULL_TAG =
+                        "backend/${env.BACKEND_VERSION}-sha.${env.CURRENT_SHORT_SHA}"
+
+                    env.BACKEND_DOCKER_VERSION_TAG =
+                        env.BACKEND_VERSION
+
+                    env.BACKEND_DOCKER_SHA_TAG =
+                        "sha-${env.CURRENT_SHORT_SHA}"
                 }
-
-
-                env.BACKEND_FULL_TAG =
-                    "backend/${env.BACKEND_VERSION}-sha.${env.CURRENT_SHORT_SHA}"
-
-                env.BACKEND_DOCKER_VERSION_TAG =
-                    env.BACKEND_VERSION
-
-                env.BACKEND_DOCKER_SHA_TAG =
-                    "sha-${env.CURRENT_SHORT_SHA}"
             }
 
 
@@ -520,14 +682,14 @@ Bump: ${backendBump.toUpperCase()}
 
             if (env.FRONTEND_CHANGED == 'true') {
 
+                env.FRONTEND_RELEASE = 'false'
+
                 if (env.FRONTEND_TAG?.trim()) {
 
                     /*
-                     * Örnek:
-                     *
-                     * frontend/v2.3.4-sha.abc1234
-                     *
-                     * Matcher kullanmıyoruz.
+                     * -------------------------------------------------
+                     * Parse frontend version
+                     * -------------------------------------------------
                      */
 
                     def frontendTagVersion =
@@ -563,14 +725,13 @@ Bump: ${backendBump.toUpperCase()}
 
 
                     // -------------------------------------------------
-                    // Son frontend tag'ından beri frontend'e dokunan
-                    // commitlerin subject + body bilgilerini al.
+                    // Commitleri al
                     // -------------------------------------------------
 
-                    def frontendCommits = sh(
+                    def frontendCommitData = sh(
                         script: """
                             git log \
-                                --format='%s%n%b%n---COMMIT-END---' \
+                                --format='%H%x09%s' \
                                 '${env.FRONTEND_BASE_SHA}..${env.CURRENT_SHA}' \
                                 -- '${env.FRONTEND_DIR}'
                         """,
@@ -581,40 +742,144 @@ Bump: ${backendBump.toUpperCase()}
                     echo """
 ========== FRONTEND COMMITS SINCE LAST TAG ==========
 
-${frontendCommits ?: 'Commit bulunamadı.'}
+${frontendCommitData ?: 'Commit bulunamadı.'}
 
 ======================================================
 """
 
 
-                    String frontendBump = 'patch'
+                    String frontendBump = 'none'
 
 
-                    if (frontendCommits) {
+                    if (frontendCommitData) {
 
-                        /*
-                         * MAJOR
-                         */
+                        frontendCommitData
+                            .split('\n')
+                            .each { line ->
 
-                        if (
-                            frontendCommits =~ /(?m)^(feat|fix|refactor|perf|chore|docs|style|test|build|ci)(\([^)]*\))?!:/ ||
-                            frontendCommits =~ /(?m)^BREAKING[ -]CHANGE[ ]*:/
-                        ) {
+                                if (!line?.trim()) {
+                                    return
+                                }
 
-                            frontendBump = 'major'
+                                def separatorIndex =
+                                    line.indexOf('\t')
 
-                        } else if (
-                            frontendCommits ==~ /(?s).*^(feat)(\([^)]*\))?:.*$/
-                        ) {
+                                if (separatorIndex < 0) {
+                                    return
+                                }
 
-                            frontendBump = 'minor'
+                                def commitSha =
+                                    line.substring(
+                                        0,
+                                        separatorIndex
+                                    ).trim()
 
-                        } else if (
-                            frontendCommits ==~ /(?s).*^(fix)(\([^)]*\))?:.*$/
-                        ) {
+                                def commitSubject =
+                                    line.substring(
+                                        separatorIndex + 1
+                                    ).trim()
 
-                            frontendBump = 'patch'
-                        }
+
+                                /*
+                                 * -------------------------------------------------
+                                 * Commit body
+                                 * -------------------------------------------------
+                                 */
+
+                                def commitBody = sh(
+                                    script: """
+                                        git show -s \
+                                            --format='%b' \
+                                            '${commitSha}'
+                                    """,
+                                    returnStdout: true
+                                ).trim()
+
+
+                                String commitBump = 'none'
+
+
+                                /*
+                                 * =================================================
+                                 * MAJOR
+                                 * =================================================
+                                 */
+
+                                if (
+                                    commitSubject ==~ /^(feat|fix|refactor|perf|chore|docs|test|ci|build|style)(\\([^)]*\\))?!:.*$/
+                                ) {
+
+                                    commitBump = 'major'
+
+                                } else if (
+                                    commitBody.contains('BREAKING CHANGE:') ||
+                                    commitBody.contains('BREAKING-CHANGE:')
+                                ) {
+
+                                    commitBump = 'major'
+
+
+                                /*
+                                 * =================================================
+                                 * MINOR
+                                 * =================================================
+                                 */
+
+                                } else if (
+                                    commitSubject ==~ /^feat(\\([^)]*\\))?:.*$/
+                                ) {
+
+                                    commitBump = 'minor'
+
+
+                                /*
+                                 * =================================================
+                                 * PATCH
+                                 * =================================================
+                                 */
+
+                                } else if (
+                                    commitSubject ==~ /^fix(\\([^)]*\\))?:.*$/ ||
+                                    commitSubject ==~ /^perf(\\([^)]*\\))?:.*$/
+                                ) {
+
+                                    commitBump = 'patch'
+                                }
+
+
+                                echo """
+Frontend commit:
+  SHA     : ${commitSha}
+  Subject : ${commitSubject}
+  Bump    : ${commitBump.toUpperCase()}
+"""
+
+
+                                /*
+                                 * -------------------------------------------------
+                                 * MAXIMUM BUMP
+                                 * -------------------------------------------------
+                                 */
+
+                                if (commitBump == 'major') {
+
+                                    frontendBump = 'major'
+
+                                } else if (
+                                    commitBump == 'minor' &&
+                                    frontendBump != 'major'
+                                ) {
+
+                                    frontendBump = 'minor'
+
+                                } else if (
+                                    commitBump == 'patch' &&
+                                    frontendBump == 'none'
+                                ) {
+
+                                    frontendBump = 'patch'
+                                }
+                            }
                     }
 
 
@@ -625,46 +890,85 @@ Bump: ${frontendBump.toUpperCase()}
 """
 
 
-                    switch (frontendBump) {
+                    /*
+                     * -------------------------------------------------
+                     * NO RELEASE
+                     * -------------------------------------------------
+                     */
 
-                        case 'major':
-                            major++
-                            minor = 0
-                            patch = 0
-                            break
+                    if (frontendBump == 'none') {
 
-                        case 'minor':
-                            minor++
-                            patch = 0
-                            break
+                        env.FRONTEND_RELEASE = 'false'
 
-                        case 'patch':
-                        default:
-                            patch++
-                            break
+                        echo """
+========== FRONTEND RELEASE ==========
+NO BUILD / NO RELEASE
+
+Frontend path değişmiş olsa bile
+release gerektiren Conventional Commit bulunamadı.
+
+======================================
+"""
+
+                    } else {
+
+                        env.FRONTEND_RELEASE = 'true'
+
+
+                        switch (frontendBump) {
+
+                            case 'major':
+                                major++
+                                minor = 0
+                                patch = 0
+                                break
+
+                            case 'minor':
+                                minor++
+                                patch = 0
+                                break
+
+                            case 'patch':
+                                patch++
+                                break
+                        }
+
+
+                        env.FRONTEND_VERSION =
+                            "v${major}.${minor}.${patch}"
+
+
+                        env.FRONTEND_FULL_TAG =
+                            "frontend/${env.FRONTEND_VERSION}-sha.${env.CURRENT_SHORT_SHA}"
+
+                        env.FRONTEND_DOCKER_VERSION_TAG =
+                            env.FRONTEND_VERSION
+
+                        env.FRONTEND_DOCKER_SHA_TAG =
+                            "sha-${env.CURRENT_SHORT_SHA}"
                     }
-
-
-                    env.FRONTEND_VERSION =
-                        "v${major}.${minor}.${patch}"
 
                 } else {
 
                     /*
+                     * -------------------------------------------------
                      * İlk frontend release
+                     * -------------------------------------------------
                      */
+
+                    env.FRONTEND_RELEASE = 'true'
+
                     env.FRONTEND_VERSION = 'v1.0.0'
+
+                    env.FRONTEND_FULL_TAG =
+                        "frontend/${env.FRONTEND_VERSION}-sha.${env.CURRENT_SHORT_SHA}"
+
+                    env.FRONTEND_DOCKER_VERSION_TAG =
+                        env.FRONTEND_VERSION
+
+                    env.FRONTEND_DOCKER_SHA_TAG =
+                        "sha-${env.CURRENT_SHORT_SHA}"
                 }
-
-
-                env.FRONTEND_FULL_TAG =
-                    "frontend/${env.FRONTEND_VERSION}-sha.${env.CURRENT_SHORT_SHA}"
-
-                env.FRONTEND_DOCKER_VERSION_TAG =
-                    env.FRONTEND_VERSION
-
-                env.FRONTEND_DOCKER_SHA_TAG =
-                    "sha-${env.CURRENT_SHORT_SHA}"
             }
 
 
@@ -676,12 +980,16 @@ Bump: ${frontendBump.toUpperCase()}
 ========== NEXT VERSIONS ==========
 
 Backend:
-  Version : ${env.BACKEND_VERSION ?: 'BUILD YOK'}
-  Git Tag : ${env.BACKEND_FULL_TAG ?: 'BUILD YOK'}
+  Changed : ${env.BACKEND_CHANGED ?: 'false'}
+  Release : ${env.BACKEND_RELEASE ?: 'false'}
+  Version : ${env.BACKEND_VERSION ?: 'NO BUILD'}
+  Git Tag : ${env.BACKEND_FULL_TAG ?: 'NO BUILD'}
 
 Frontend:
-  Version : ${env.FRONTEND_VERSION ?: 'BUILD YOK'}
-  Git Tag : ${env.FRONTEND_FULL_TAG ?: 'BUILD YOK'}
+  Changed : ${env.FRONTEND_CHANGED ?: 'false'}
+  Release : ${env.FRONTEND_RELEASE ?: 'false'}
+  Version : ${env.FRONTEND_VERSION ?: 'NO BUILD'}
+  Git Tag : ${env.FRONTEND_FULL_TAG ?: 'NO BUILD'}
 
 ====================================
 """
@@ -689,137 +997,133 @@ Frontend:
     }
 }
 
+stage('12 - Docker Image Build') {
+    steps {
+        script {
 
+            if (env.BACKEND_RELEASE == 'true') {
 
+                sh """
+                    docker build \
+                        -t '${DOCKERHUB_BACKEND_REPO}:${env.BACKEND_DOCKER_VERSION_TAG}' \
+                        -t '${DOCKERHUB_BACKEND_REPO}:${env.BACKEND_DOCKER_SHA_TAG}' \
+                        '${BACKEND_DIR}'
+                """
+            }
 
-        stage('12 - Docker Image Build') {
-            steps {
-                script {
+            if (env.FRONTEND_RELEASE == 'true') {
 
-                    if (env.BACKEND_CHANGED == 'true') {
-
-                        sh """
-                            docker build \
-                                -t '${DOCKERHUB_BACKEND_REPO}:${env.BACKEND_DOCKER_VERSION_TAG}' \
-                                -t '${DOCKERHUB_BACKEND_REPO}:${env.BACKEND_DOCKER_SHA_TAG}' \
-                                '${BACKEND_DIR}'
-                        """
-                    }
-
-                    if (env.FRONTEND_CHANGED == 'true') {
-
-                        sh """
-                            docker build \
-                                -t '${DOCKERHUB_FRONTEND_REPO}:${env.FRONTEND_DOCKER_VERSION_TAG}' \
-                                -t '${DOCKERHUB_FRONTEND_REPO}:${env.FRONTEND_DOCKER_SHA_TAG}' \
-                                '${FRONTEND_DIR}'
-                        """
-                    }
-                }
+                sh """
+                    docker build \
+                        -t '${DOCKERHUB_FRONTEND_REPO}:${env.FRONTEND_DOCKER_VERSION_TAG}' \
+                        -t '${DOCKERHUB_FRONTEND_REPO}:${env.FRONTEND_DOCKER_SHA_TAG}' \
+                        '${FRONTEND_DIR}'
+                """
             }
         }
+    }
+}
 
-        stage('13 - Docker Hub Push') {
-            steps {
-                script {
+stage('13 - Docker Hub Push') {
+    steps {
+        script {
 
-                    withCredentials([
-                        usernamePassword(
-                            credentialsId: 'dockerhub-credentials',
-                            usernameVariable: 'DOCKER_USERNAME',
-                            passwordVariable: 'DOCKER_PASSWORD'
-                        )
-                    ]) {
+            withCredentials([
+                usernamePassword(
+                    credentialsId: 'dockerhub-credentials',
+                    usernameVariable: 'DOCKER_USERNAME',
+                    passwordVariable: 'DOCKER_PASSWORD'
+                )
+            ]) {
 
-                        sh '''
-                            set -eu
-                            set +x
+                sh '''
+                    set -eu
+                    set +x
 
-                            echo "$DOCKER_PASSWORD" |
-                                docker login \
-                                    -u "$DOCKER_USERNAME" \
-                                    --password-stdin
-                        '''
+                    echo "$DOCKER_PASSWORD" |
+                        docker login \
+                            -u "$DOCKER_USERNAME" \
+                            --password-stdin
+                '''
 
-                        if (env.BACKEND_CHANGED == 'true') {
+                if (env.BACKEND_RELEASE == 'true') {
 
-                            sh """
-                                docker push \
-                                    '${DOCKERHUB_BACKEND_REPO}:${env.BACKEND_DOCKER_VERSION_TAG}'
+                    sh """
+                        docker push \
+                            '${DOCKERHUB_BACKEND_REPO}:${env.BACKEND_DOCKER_VERSION_TAG}'
 
-                                docker push \
-                                    '${DOCKERHUB_BACKEND_REPO}:${env.BACKEND_DOCKER_SHA_TAG}'
-                            """
-                        }
-
-                        if (env.FRONTEND_CHANGED == 'true') {
-
-                            sh """
-                                docker push \
-                                    '${DOCKERHUB_FRONTEND_REPO}:${env.FRONTEND_DOCKER_VERSION_TAG}'
-
-                                docker push \
-                                    '${DOCKERHUB_FRONTEND_REPO}:${env.FRONTEND_DOCKER_SHA_TAG}'
-                            """
-                        }
-
-                        sh 'docker logout'
-                    }
+                        docker push \
+                            '${DOCKERHUB_BACKEND_REPO}:${env.BACKEND_DOCKER_SHA_TAG}'
+                    """
                 }
+
+                if (env.FRONTEND_RELEASE == 'true') {
+
+                    sh """
+                        docker push \
+                            '${DOCKERHUB_FRONTEND_REPO}:${env.FRONTEND_DOCKER_VERSION_TAG}'
+
+                        docker push \
+                            '${DOCKERHUB_FRONTEND_REPO}:${env.FRONTEND_DOCKER_SHA_TAG}'
+                    """
+                }
+
+                sh 'docker logout'
             }
         }
+    }
+}
 
-        stage('14 - Create GitHub Tags') {
-            steps {
-                script {
+stage('14 - Create GitHub Tags') {
+    steps {
+        script {
 
-                    withCredentials([
-                        string(
-                            credentialsId: 'github-token',
-                            variable: 'GITHUB_TOKEN'
-                        )
-                    ]) {
+            withCredentials([
+                string(
+                    credentialsId: 'github-token',
+                    variable: 'GITHUB_TOKEN'
+                )
+            ]) {
 
-                        if (env.BACKEND_CHANGED == 'true') {
+                if (env.BACKEND_RELEASE == 'true') {
 
-                            sh """
-                                curl \
-                                    -sS \
-                                    -X POST \
-                                    -H "Authorization: Bearer \$GITHUB_TOKEN" \
-                                    -H "Accept: application/vnd.github+json" \
-                                    https://api.github.com/repos/${GITHUB_REPO}/git/refs \
-                                    -d '{
-                                        "ref":"refs/tags/${env.BACKEND_FULL_TAG}",
-                                        "sha":"${env.CURRENT_SHA}"
-                                    }'
-                            """
-                        }
+                    sh """
+                        curl \
+                            -sS \
+                            -X POST \
+                            -H "Authorization: Bearer \$GITHUB_TOKEN" \
+                            -H "Accept: application/vnd.github+json" \
+                            https://api.github.com/repos/${GITHUB_REPO}/git/refs \
+                            -d '{
+                                "ref":"refs/tags/${env.BACKEND_FULL_TAG}",
+                                "sha":"${env.CURRENT_SHA}"
+                            }'
+                    """
+                }
 
-                        if (env.FRONTEND_CHANGED == 'true') {
+                if (env.FRONTEND_RELEASE == 'true') {
 
-                            sh """
-                                curl \
-                                    -sS \
-                                    -X POST \
-                                    -H "Authorization: Bearer \$GITHUB_TOKEN" \
-                                    -H "Accept: application/vnd.github+json" \
-                                    https://api.github.com/repos/${GITHUB_REPO}/git/refs \
-                                    -d '{
-                                        "ref":"refs/tags/${env.FRONTEND_FULL_TAG}",
-                                        "sha":"${env.CURRENT_SHA}"
-                                    }'
-                            """
-                        }
-                    }
+                    sh """
+                        curl \
+                            -sS \
+                            -X POST \
+                            -H "Authorization: Bearer \$GITHUB_TOKEN" \
+                            -H "Accept: application/vnd.github+json" \
+                            https://api.github.com/repos/${GITHUB_REPO}/git/refs \
+                            -d '{
+                                "ref":"refs/tags/${env.FRONTEND_FULL_TAG}",
+                                "sha":"${env.CURRENT_SHA}"
+                            }'
+                    """
                 }
             }
         }
     }
+}
 
-    post {
-        always {
-            echo """
+post {
+    always {
+        echo """
 ========================================
  Jenkins Versioning Pipeline Finished
 ========================================
@@ -833,6 +1137,12 @@ ${env.BACKEND_CHANGED ?: 'N/A'}
 Frontend changed:
 ${env.FRONTEND_CHANGED ?: 'N/A'}
 
+Backend release:
+${env.BACKEND_RELEASE ?: 'N/A'}
+
+Frontend release:
+${env.FRONTEND_RELEASE ?: 'N/A'}
+
 Backend tag:
 ${env.BACKEND_FULL_TAG ?: 'N/A'}
 
@@ -841,6 +1151,5 @@ ${env.FRONTEND_FULL_TAG ?: 'N/A'}
 
 ========================================
 """
-        }
     }
 }
