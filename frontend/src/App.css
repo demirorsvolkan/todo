@@ -83,11 +83,11 @@ li button {
   padding: 7px 12px;
   border: none;
   border-radius: 5px;
-  background: #ef4444;
+  background: #9c44ef;
   color: white;
   cursor: pointer;
 }
 
 li button:hover {
-  background: #d12317;
+  background: #c217d1;
 }
