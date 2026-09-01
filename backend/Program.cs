@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using TodoApi.Data;
 using TodoApi.Models;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using System.Runtime.InteropServices;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddHealthChecks()
@@ -35,11 +36,14 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 {
     Predicate = check => check.Tags.Contains("ready")
 });
+
+
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
 }
+
 
 if (app.Environment.IsDevelopment())
 {
@@ -87,4 +91,44 @@ app.MapPut("/todos/{id}", async (int id, Todo updatedTodo, AppDbContext db) =>
 
     return Results.Ok(todo);
 });
+app.MapGet("/test/memory", async (HttpContext context) =>
+{
+    const nuint size = 1024 * 1024; // 1 MiB
+    const nuint pageSize = 4096;
+
+    IntPtr ptr;
+
+    unsafe
+    {
+        ptr = (IntPtr)NativeMemory.Alloc(size);
+
+        // Bellek sayfalarını gerçekten resident hale getir.
+        byte* memory = (byte*)ptr;
+
+        for (nuint offset = 0; offset < size; offset += pageSize)
+        {
+            memory[offset] = 1;
+        }
+    }
+
+    try
+    {
+        // Belleği yaklaşık 1 saniye tut.
+        await Task.Delay(
+            TimeSpan.FromSeconds(1),
+            context.RequestAborted
+        );
+    }
+    finally
+    {
+        unsafe
+        {
+            NativeMemory.Free((void*)ptr);
+        }
+    }
+
+    return Results.Ok("1 MiB allocated and held for ~1 second");
+});
+
+
 app.Run();
