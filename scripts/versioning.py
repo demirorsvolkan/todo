@@ -1,8 +1,8 @@
+```python
 #!/usr/bin/env python3
 
 import re
 import subprocess
-import sys
 
 
 COMPONENTS = {
@@ -22,40 +22,45 @@ def run_git(*args):
 
 
 def get_latest_tag(component):
+    """
+    Supports both tag formats:
+
+        frontend/v2.0.7-sha.abcdef1
+        frontend/2.0.7-sha.abcdef1
+
+    Existing tags use both formats, so both are accepted.
+    """
+
     tags = run_git(
         "tag",
         "--list",
-        f"{component}/v*",
+        f"{component}/*",
     ).splitlines()
 
-    if not tags:
+    versioned_tags = []
+
+    for tag in tags:
+        match = re.search(
+            r"/v?(\d+)\.(\d+)\.(\d+)(?:-sha\.[0-9a-fA-F]+)?$",
+            tag,
+        )
+
+        if match:
+            version = tuple(map(int, match.groups()))
+            versioned_tags.append((version, tag))
+
+    if not versioned_tags:
         return None
 
-    def version_key(tag):
-        match = re.search(r"/v(\d+)\.(\d+)\.(\d+)", tag)
-        if not match:
-            return (0, 0, 0)
-
-        return tuple(map(int, match.groups()))
-
-    return max(tags, key=version_key)
+    return max(versioned_tags, key=lambda item: item[0])[1]
 
 
 def get_tag_commit(tag):
-    return run_git("rev-list", "-n", "1", tag)
-
-
-def get_commits_since(tag):
-    if tag:
-        return run_git(
-            "log",
-            f"{tag}..HEAD",
-            "--format=%H%n%s%n%b",
-        )
-
     return run_git(
-        "log",
-        "--format=%H%n%s%n%b",
+        "rev-list",
+        "-n",
+        "1",
+        tag,
     )
 
 
@@ -101,46 +106,52 @@ def get_component_commits(tag, component):
 
 
 def get_bump(commits):
+    """
+    Conventional Commit rules:
+
+    feat:       -> minor
+    fix:        -> patch
+    perf:       -> patch
+
+    feat!:      -> major
+    fix!:       -> major
+    perf!:      -> major
+
+    BREAKING CHANGE -> major
+
+    Everything else -> none
+    """
+
     if not commits.strip():
         return "none"
 
     # Explicit breaking-change footer
     if re.search(
-        r"BREAKING CHANGE|BREAKING-CHANGE",
+        r"BREAKING[ -]CHANGE",
         commits,
         re.IGNORECASE,
     ):
         return "major"
 
-    # Conventional Commits breaking-change marker: feat!: / fix!: / perf!:
+    # Conventional Commit breaking-change marker
     if re.search(
-        r"(^|\n)(feat|fix|perf)(\(.+?\))?!:",
+        r"(^|\n)(feat|fix|perf)(\([^)\n]+\))?!:",
         commits,
         re.IGNORECASE,
     ):
-        # The ! must be present immediately before the colon.
-        if re.search(
-            r"(^|\n)(feat|fix|perf)(\(.+?\))?!:",
-            commits,
-            re.IGNORECASE,
-        ):
-            matches = re.findall(
-                r"(^|\n)(feat|fix|perf)(\(.+?\))?!:",
-                commits,
-                re.IGNORECASE,
-            )
-            if matches:
-                return "major"
+        return "major"
 
+    # Feature -> minor
     if re.search(
-        r"(^|\n)feat(\(.+?\))?:",
+        r"(^|\n)feat(\([^)\n]+\))?:",
         commits,
         re.IGNORECASE,
     ):
         return "minor"
 
+    # Fix / performance -> patch
     if re.search(
-        r"(^|\n)(fix|perf)(\(.+?\))?:",
+        r"(^|\n)(fix|perf)(\([^)\n]+\))?:",
         commits,
         re.IGNORECASE,
     ):
@@ -148,17 +159,20 @@ def get_bump(commits):
 
     return "none"
 
+
 def parse_version(tag):
     if not tag:
         return (0, 0, 0)
 
     match = re.search(
-        r"/v(\d+)\.(\d+)\.(\d+)",
+        r"/v?(\d+)\.(\d+)\.(\d+)",
         tag,
     )
 
     if not match:
-        raise ValueError(f"Invalid version tag: {tag}")
+        raise ValueError(
+            f"Invalid version tag: {tag}"
+        )
 
     return tuple(map(int, match.groups()))
 
@@ -234,22 +248,27 @@ def main():
             f"{component}_release="
             f"{str(result['release']).lower()}"
         )
+
         print(
             f"{component}_version="
             f"{result['version'] or ''}"
         )
+
         print(
             f"{component}_bump="
             f"{result['bump']}"
         )
+
         print(
             f"{component}_previous_tag="
             f"{result['previous_tag'] or ''}"
         )
+
         print(
             f"{component}_previous_commit="
             f"{result['previous_commit']}"
         )
+
         print(
             f"{component}_changed_files="
             f"{result['changed_files']}"
@@ -258,3 +277,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
