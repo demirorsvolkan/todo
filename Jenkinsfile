@@ -4,7 +4,7 @@ pipeline {
 
     options {
         disableConcurrentBuilds()
-        skipDefaultCheckout(false)
+        skipDefaultCheckout(true)
     }
 
     environment {
@@ -33,6 +33,7 @@ pipeline {
         stage('02 - Current Commit') {
             steps {
                 script {
+
                     env.CURRENT_SHA = sh(
                         script: 'git rev-parse HEAD',
                         returnStdout: true
@@ -128,7 +129,6 @@ Frontend:
 
                         env.BACKEND_DOCKER_SHA_TAG =
                             "sha-${env.CURRENT_SHORT_SHA}"
-
                     }
 
                     if (env.FRONTEND_RELEASE == 'true') {
@@ -141,7 +141,6 @@ Frontend:
 
                         env.FRONTEND_DOCKER_SHA_TAG =
                             "sha-${env.CURRENT_SHORT_SHA}"
-
                     }
 
                     echo """
@@ -163,11 +162,11 @@ Frontend:
             }
         }
 
-        stage('05 - Stop If Nothing To Release') {
+        stage('05 - Release Check') {
             when {
                 expression {
-                    env.BACKEND_RELEASE != 'true' &&
-                    env.FRONTEND_RELEASE != 'true'
+                    env.BACKEND_RELEASE == 'true' ||
+                    env.FRONTEND_RELEASE == 'true'
                 }
             }
 
@@ -175,12 +174,11 @@ Frontend:
                 echo '''
 ==================================================
 
-Backend veya frontend için release gerektiren
-bir değişiklik bulunamadı.
+Release gerektiren değişiklik bulundu.
 
-Docker image oluşturulmayacak.
-Docker Hub push yapılmayacak.
-GitHub tag oluşturulmayacak.
+Docker image oluşturma,
+Docker Hub push
+ve GitHub tag işlemleri başlatılacak.
 
 ==================================================
 '''
@@ -188,6 +186,13 @@ GitHub tag oluşturulmayacak.
         }
 
         stage('06 - Docker Image Build') {
+            when {
+                expression {
+                    env.BACKEND_RELEASE == 'true' ||
+                    env.FRONTEND_RELEASE == 'true'
+                }
+            }
+
             steps {
                 script {
 
@@ -219,110 +224,112 @@ GitHub tag oluşturulmayacak.
         }
 
         stage('07 - Docker Hub Push') {
+            when {
+                expression {
+                    env.BACKEND_RELEASE == 'true' ||
+                    env.FRONTEND_RELEASE == 'true'
+                }
+            }
+
             steps {
                 script {
 
-                    if (
-                        env.BACKEND_RELEASE == 'true' ||
-                        env.FRONTEND_RELEASE == 'true'
-                    ) {
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'dockerhub-credentials',
+                            usernameVariable: 'DOCKER_USERNAME',
+                            passwordVariable: 'DOCKER_PASSWORD'
+                        )
+                    ]) {
 
-                        withCredentials([
-                            usernamePassword(
-                                credentialsId: 'dockerhub-credentials',
-                                usernameVariable: 'DOCKER_USERNAME',
-                                passwordVariable: 'DOCKER_PASSWORD'
-                            )
-                        ]) {
+                        sh '''
+                            set -eu
+                            set +x
 
-                            sh '''
-                                set -eu
-                                set +x
+                            echo "$DOCKER_PASSWORD" |
+                                docker login \
+                                    -u "$DOCKER_USERNAME" \
+                                    --password-stdin
+                        '''
 
-                                echo "$DOCKER_PASSWORD" |
-                                    docker login \
-                                        -u "$DOCKER_USERNAME" \
-                                        --password-stdin
-                            '''
+                        if (env.BACKEND_RELEASE == 'true') {
 
-                            if (env.BACKEND_RELEASE == 'true') {
+                            sh """
+                                docker push \
+                                    '${DOCKERHUB_BACKEND_REPO}:${env.BACKEND_DOCKER_VERSION_TAG}'
 
-                                sh """
-                                    docker push \
-                                        '${DOCKERHUB_BACKEND_REPO}:${env.BACKEND_DOCKER_VERSION_TAG}'
-
-                                    docker push \
-                                        '${DOCKERHUB_BACKEND_REPO}:${env.BACKEND_DOCKER_SHA_TAG}'
-                                """
-                            }
-
-                            if (env.FRONTEND_RELEASE == 'true') {
-
-                                sh """
-                                    docker push \
-                                        '${DOCKERHUB_FRONTEND_REPO}:${env.FRONTEND_DOCKER_VERSION_TAG}'
-
-                                    docker push \
-                                        '${DOCKERHUB_FRONTEND_REPO}:${env.FRONTEND_DOCKER_SHA_TAG}'
-                                """
-                            }
-
-                            sh 'docker logout'
+                                docker push \
+                                    '${DOCKERHUB_BACKEND_REPO}:${env.BACKEND_DOCKER_SHA_TAG}'
+                            """
                         }
+
+                        if (env.FRONTEND_RELEASE == 'true') {
+
+                            sh """
+                                docker push \
+                                    '${DOCKERHUB_FRONTEND_REPO}:${env.FRONTEND_DOCKER_VERSION_TAG}'
+
+                                docker push \
+                                    '${DOCKERHUB_FRONTEND_REPO}:${env.FRONTEND_DOCKER_SHA_TAG}'
+                            """
+                        }
+
+                        sh 'docker logout'
                     }
                 }
             }
         }
 
         stage('08 - Create GitHub Tags') {
+            when {
+                expression {
+                    env.BACKEND_RELEASE == 'true' ||
+                    env.FRONTEND_RELEASE == 'true'
+                }
+            }
+
             steps {
                 script {
 
-                    if (
-                        env.BACKEND_RELEASE == 'true' ||
-                        env.FRONTEND_RELEASE == 'true'
-                    ) {
+                    withCredentials([
+                        string(
+                            credentialsId: 'github-token',
+                            variable: 'GITHUB_TOKEN'
+                        )
+                    ]) {
 
-                        withCredentials([
-                            string(
-                                credentialsId: 'github-token',
-                                variable: 'GITHUB_TOKEN'
-                            )
-                        ]) {
+                        if (env.BACKEND_RELEASE == 'true') {
 
-                            if (env.BACKEND_RELEASE == 'true') {
+                            sh """
+                                curl \
+                                    -sS \
+                                    -f \
+                                    -X POST \
+                                    -H "Authorization: Bearer \\$GITHUB_TOKEN" \
+                                    -H "Accept: application/vnd.github+json" \
+                                    "https://api.github.com/repos/${GITHUB_REPO}/git/refs" \
+                                    -d '{
+                                        "ref":"refs/tags/${env.BACKEND_FULL_TAG}",
+                                        "sha":"${env.CURRENT_SHA}"
+                                    }'
+                            """
+                        }
 
-                                sh """
-                                    curl \
-                                        -sS \
-                                        -f \
-                                        -X POST \
-                                        -H "Authorization: Bearer \\$GITHUB_TOKEN" \
-                                        -H "Accept: application/vnd.github+json" \
-                                        "https://api.github.com/repos/${GITHUB_REPO}/git/refs" \
-                                        -d '{
-                                            "ref":"refs/tags/${env.BACKEND_FULL_TAG}",
-                                            "sha":"${env.CURRENT_SHA}"
-                                        }'
-                                """
-                            }
+                        if (env.FRONTEND_RELEASE == 'true') {
 
-                            if (env.FRONTEND_RELEASE == 'true') {
-
-                                sh """
-                                    curl \
-                                        -sS \
-                                        -f \
-                                        -X POST \
-                                        -H "Authorization: Bearer \\$GITHUB_TOKEN" \
-                                        -H "Accept: application/vnd.github+json" \
-                                        "https://api.github.com/repos/${GITHUB_REPO}/git/refs" \
-                                        -d '{
-                                            "ref":"refs/tags/${env.FRONTEND_FULL_TAG}",
-                                            "sha":"${env.CURRENT_SHA}"
-                                        }'
-                                """
-                            }
+                            sh """
+                                curl \
+                                    -sS \
+                                    -f \
+                                    -X POST \
+                                    -H "Authorization: Bearer \\$GITHUB_TOKEN" \
+                                    -H "Accept: application/vnd.github+json" \
+                                    "https://api.github.com/repos/${GITHUB_REPO}/git/refs" \
+                                    -d '{
+                                        "ref":"refs/tags/${env.FRONTEND_FULL_TAG}",
+                                        "sha":"${env.CURRENT_SHA}"
+                                    }'
+                            """
                         }
                     }
                 }
