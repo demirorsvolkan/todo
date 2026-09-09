@@ -55,7 +55,89 @@ Short SHA   : ${env.CURRENT_SHORT_SHA}
             }
         }
 
-        stage('03 - Versioning') {
+        stage('03 - GitHub Authentication') {
+            steps {
+                echo '========== GITHUB AUTHENTICATION =========='
+
+                withCredentials([
+                    string(
+                        credentialsId: 'github-token',
+                        variable: 'GITHUB_TOKEN'
+                    )
+                ]) {
+
+                    sh '''
+                        set -eu
+                        set +x
+
+                        test -n "$GITHUB_TOKEN"
+
+                        HTTP_CODE=$(
+                            curl \
+                                -sS \
+                                -o /tmp/github-user.json \
+                                -w '%{http_code}' \
+                                -H "Authorization: Bearer $GITHUB_TOKEN" \
+                                -H "Accept: application/vnd.github+json" \
+                                -H "X-GitHub-Api-Version: 2022-11-28" \
+                                https://api.github.com/user
+                        )
+
+                        echo "GitHub authentication HTTP status: $HTTP_CODE"
+
+                        if [ "$HTTP_CODE" != "200" ]; then
+                            echo "GitHub authentication FAILED."
+                            cat /tmp/github-user.json || true
+                            exit 1
+                        fi
+
+                        echo "GitHub authentication OK."
+                    '''
+                }
+            }
+        }
+
+        stage('04 - GitHub Repository Access') {
+            steps {
+                echo '========== GITHUB REPOSITORY ACCESS =========='
+
+                withCredentials([
+                    string(
+                        credentialsId: 'github-token',
+                        variable: 'GITHUB_TOKEN'
+                    )
+                ]) {
+
+                    sh '''
+                        set -eu
+                        set +x
+
+                        HTTP_STATUS=$(
+                            curl \
+                                -sS \
+                                -o /tmp/github-repo.json \
+                                -w "%{http_code}" \
+                                -H "Authorization: Bearer $GITHUB_TOKEN" \
+                                -H "Accept: application/vnd.github+json" \
+                                -H "X-GitHub-Api-Version: 2022-11-28" \
+                                "https://api.github.com/repos/$GITHUB_REPO"
+                        )
+
+                        echo "GitHub repository HTTP status: $HTTP_STATUS"
+
+                        if [ "$HTTP_STATUS" != "200" ]; then
+                            echo "GitHub repository access FAILED."
+                            cat /tmp/github-repo.json || true
+                            exit 1
+                        fi
+
+                        echo "GitHub repository access OK."
+                    '''
+                }
+            }
+        }
+
+        stage('05 - Versioning') {
             steps {
                 script {
 
@@ -115,7 +197,7 @@ Frontend:
             }
         }
 
-        stage('04 - Prepare Release Metadata') {
+        stage('06 - Prepare Release Metadata') {
             steps {
                 script {
 
@@ -162,7 +244,7 @@ Frontend:
             }
         }
 
-        stage('05 - Release Check') {
+        stage('07 - Release Check') {
             when {
                 expression {
                     env.BACKEND_RELEASE == 'true' ||
@@ -185,7 +267,7 @@ ve GitHub tag işlemleri başlatılacak.
             }
         }
 
-        stage('06 - Docker Image Build') {
+        stage('08 - Docker Image Build') {
             when {
                 expression {
                     env.BACKEND_RELEASE == 'true' ||
@@ -223,7 +305,7 @@ ve GitHub tag işlemleri başlatılacak.
             }
         }
 
-        stage('07 - Docker Hub Push') {
+        stage('09 - Docker Hub Push') {
             when {
                 expression {
                     env.BACKEND_RELEASE == 'true' ||
@@ -280,7 +362,7 @@ ve GitHub tag işlemleri başlatılacak.
             }
         }
 
-        stage('08 - Create GitHub Tags') {
+        stage('10 - Create GitHub Tags') {
             when {
                 expression {
                     env.BACKEND_RELEASE == 'true' ||
@@ -300,36 +382,44 @@ ve GitHub tag işlemleri başlatılacak.
 
                         if (env.BACKEND_RELEASE == 'true') {
 
-                            sh """
+                            sh '''
+                                set -eu
+                                set +x
+
                                 curl \
                                     -sS \
                                     -f \
                                     -X POST \
-                                    -H "Authorization: Bearer \\$GITHUB_TOKEN" \
+                                    -H "Authorization: Bearer $GITHUB_TOKEN" \
                                     -H "Accept: application/vnd.github+json" \
-                                    "https://api.github.com/repos/${GITHUB_REPO}/git/refs" \
+                                    -H "X-GitHub-Api-Version: 2022-11-28" \
+                                    "https://api.github.com/repos/$GITHUB_REPO/git/refs" \
                                     -d '{
-                                        "ref":"refs/tags/${env.BACKEND_FULL_TAG}",
-                                        "sha":"${env.CURRENT_SHA}"
+                                        "ref":"refs/tags/'"${BACKEND_FULL_TAG}"'",
+                                        "sha":"'"${CURRENT_SHA}"'"
                                     }'
-                            """
+                            '''
                         }
 
                         if (env.FRONTEND_RELEASE == 'true') {
 
-                            sh """
+                            sh '''
+                                set -eu
+                                set +x
+
                                 curl \
                                     -sS \
                                     -f \
                                     -X POST \
-                                    -H "Authorization: Bearer \\$GITHUB_TOKEN" \
+                                    -H "Authorization: Bearer $GITHUB_TOKEN" \
                                     -H "Accept: application/vnd.github+json" \
-                                    "https://api.github.com/repos/${GITHUB_REPO}/git/refs" \
+                                    -H "X-GitHub-Api-Version: 2022-11-28" \
+                                    "https://api.github.com/repos/$GITHUB_REPO/git/refs" \
                                     -d '{
-                                        "ref":"refs/tags/${env.FRONTEND_FULL_TAG}",
-                                        "sha":"${env.CURRENT_SHA}"
+                                        "ref":"refs/tags/'"${FRONTEND_FULL_TAG}"'",
+                                        "sha":"'"${CURRENT_SHA}"'"
                                     }'
-                            """
+                            '''
                         }
                     }
                 }
