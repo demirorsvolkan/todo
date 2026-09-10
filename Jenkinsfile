@@ -259,8 +259,9 @@ Frontend:
 Release gerektiren değişiklik bulundu.
 
 Docker image oluşturma,
-Docker Hub push
-ve GitHub tag işlemleri başlatılacak.
+Docker Hub push,
+GitHub tag
+ve güvenlik taraması işlemleri başlatılacak.
 
 ==================================================
 '''
@@ -305,7 +306,189 @@ ve GitHub tag işlemleri başlatılacak.
             }
         }
 
-        stage('09 - Docker Hub Push') {
+        stage('09 - Trivy Security Scan') {
+            when {
+                expression {
+                    env.BACKEND_RELEASE == 'true' ||
+                    env.FRONTEND_RELEASE == 'true'
+                }
+            }
+
+            steps {
+                script {
+
+                    /*
+                     * Scan başlamadan önce mevcut release durumlarını
+                     * saklıyoruz.
+                     *
+                     * Çünkü Trivy başarısız olduğunda RELEASE flag'i
+                     * false yapılacak.
+                     */
+                    def backendWasReleased =
+                        env.BACKEND_RELEASE == 'true'
+
+                    def frontendWasReleased =
+                        env.FRONTEND_RELEASE == 'true'
+
+                    def backendScanPassed = true
+                    def frontendScanPassed = true
+
+                    env.BACKEND_SECURITY_FAILED = 'false'
+                    env.FRONTEND_SECURITY_FAILED = 'false'
+
+                    /*
+                     * BACKEND SECURITY SCAN
+                     */
+                    if (backendWasReleased) {
+
+                        echo '''
+========== TRIVY BACKEND SECURITY SCAN ==========
+'''
+
+                        def backendStatus = sh(
+                            script: """
+                                trivy image \
+                                    --config /dev/null \
+                                    --severity HIGH,CRITICAL \
+                                    --exit-code 1 \
+                                    --no-progress \
+                                    '${DOCKERHUB_BACKEND_REPO}:${env.BACKEND_DOCKER_VERSION_TAG}'
+                            """,
+                            returnStatus: true
+                        )
+
+                        backendScanPassed = (backendStatus == 0)
+
+                        if (!backendScanPassed) {
+
+                            echo '''
+Backend Trivy security scan FAILED.
+Backend release will be blocked.
+Jenkins pipeline will be marked as FAILURE.
+'''
+
+                            env.BACKEND_SECURITY_FAILED = 'true'
+                            env.BACKEND_RELEASE = 'false'
+
+                            currentBuild.result = 'FAILURE'
+
+                        } else {
+
+                            echo '''
+Backend Trivy security scan PASSED.
+'''
+                        }
+                    }
+
+                    /*
+                     * FRONTEND SECURITY SCAN
+                     */
+                    if (frontendWasReleased) {
+
+                        echo '''
+========== TRIVY FRONTEND SECURITY SCAN ==========
+'''
+
+                        def frontendStatus = sh(
+                            script: """
+                                trivy image \
+                                    --config /dev/null \
+                                    --severity HIGH,CRITICAL \
+                                    --exit-code 1 \
+                                    --no-progress \
+                                    '${DOCKERHUB_FRONTEND_REPO}:${env.FRONTEND_DOCKER_VERSION_TAG}'
+                            """,
+                            returnStatus: true
+                        )
+
+                        frontendScanPassed = (frontendStatus == 0)
+
+                        if (!frontendScanPassed) {
+
+                            echo '''
+Frontend Trivy security scan FAILED.
+Frontend release will be blocked.
+Jenkins pipeline will be marked as FAILURE.
+'''
+
+                            env.FRONTEND_SECURITY_FAILED = 'true'
+                            env.FRONTEND_RELEASE = 'false'
+
+                            currentBuild.result = 'FAILURE'
+
+                        } else {
+
+                            echo '''
+Frontend Trivy security scan PASSED.
+'''
+                        }
+                    }
+
+                    /*
+                     * ÖZEL RELEASE KURALI
+                     *
+                     * Backend ve frontend aynı pipeline'da release ediliyor
+                     * VE ikisi de feat veya major seviyesindeyse,
+                     * frontend security scan fail olduğunda backend de
+                     * release edilmeyecek.
+                     *
+                     * patch seviyesinde bu bağımlılık uygulanmaz.
+                     */
+                    def bothAreFeatureReleases =
+                        backendWasReleased &&
+                        frontendWasReleased &&
+                        env.BACKEND_BUMP in ['major', 'minor'] &&
+                        env.FRONTEND_BUMP in ['major', 'minor']
+
+                    if (
+                        bothAreFeatureReleases &&
+                        !frontendScanPassed &&
+                        backendScanPassed
+                    ) {
+
+                        echo '''
+==================================================
+
+Frontend security scan FAILED.
+
+Backend ve frontend aynı anda
+feat/major seviyesinde release edildiği için
+backend release de BLOCKED.
+
+Backend Trivy scan PASSED olsa bile
+backend Docker image push edilmeyecek.
+
+==================================================
+'''
+
+                        env.BACKEND_RELEASE = 'false'
+
+                        currentBuild.result = 'FAILURE'
+                    }
+
+                    echo """
+========== TRIVY RESULT ==========
+
+Backend:
+  Scan Passed     : ${backendScanPassed}
+  Security Failed : ${env.BACKEND_SECURITY_FAILED}
+  Release Allowed : ${env.BACKEND_RELEASE}
+
+Frontend:
+  Scan Passed     : ${frontendScanPassed}
+  Security Failed : ${env.FRONTEND_SECURITY_FAILED}
+  Release Allowed : ${env.FRONTEND_RELEASE}
+
+Build Result:
+  ${currentBuild.result ?: 'SUCCESS'}
+
+====================================
+"""
+                }
+            }
+        }
+
+        stage('10 - Docker Hub Push') {
             when {
                 expression {
                     env.BACKEND_RELEASE == 'true' ||
@@ -334,7 +517,13 @@ ve GitHub tag işlemleri başlatılacak.
                                     --password-stdin
                         '''
 
+                        /*
+                         * Sadece security scan'dan geçen ve
+                         * release flag'i hala true olan backend push edilir.
+                         */
                         if (env.BACKEND_RELEASE == 'true') {
+
+                            echo '========== PUSH BACKEND IMAGE =========='
 
                             sh """
                                 docker push \
@@ -343,9 +532,18 @@ ve GitHub tag işlemleri başlatılacak.
                                 docker push \
                                     '${DOCKERHUB_BACKEND_REPO}:${env.BACKEND_DOCKER_SHA_TAG}'
                             """
+                        } else {
+
+                            echo 'Backend release blocked. Docker Hub push skipped.'
                         }
 
+                        /*
+                         * Sadece security scan'dan geçen ve
+                         * release flag'i hala true olan frontend push edilir.
+                         */
                         if (env.FRONTEND_RELEASE == 'true') {
+
+                            echo '========== PUSH FRONTEND IMAGE =========='
 
                             sh """
                                 docker push \
@@ -354,6 +552,9 @@ ve GitHub tag işlemleri başlatılacak.
                                 docker push \
                                     '${DOCKERHUB_FRONTEND_REPO}:${env.FRONTEND_DOCKER_SHA_TAG}'
                             """
+                        } else {
+
+                            echo 'Frontend release blocked. Docker Hub push skipped.'
                         }
 
                         sh 'docker logout'
@@ -362,7 +563,7 @@ ve GitHub tag işlemleri başlatılacak.
             }
         }
 
-        stage('10 - Create GitHub Tags') {
+        stage('11 - Create GitHub Tags') {
             when {
                 expression {
                     env.BACKEND_RELEASE == 'true' ||
@@ -382,6 +583,8 @@ ve GitHub tag işlemleri başlatılacak.
 
                         if (env.BACKEND_RELEASE == 'true') {
 
+                            echo '========== CREATE BACKEND GITHUB TAG =========='
+
                             sh '''
                                 set -eu
                                 set +x
@@ -399,9 +602,14 @@ ve GitHub tag işlemleri başlatılacak.
                                         "sha":"'"${CURRENT_SHA}"'"
                                     }'
                             '''
+                        } else {
+
+                            echo 'Backend GitHub tag skipped.'
                         }
 
                         if (env.FRONTEND_RELEASE == 'true') {
+
+                            echo '========== CREATE FRONTEND GITHUB TAG =========='
 
                             sh '''
                                 set -eu
@@ -420,6 +628,9 @@ ve GitHub tag işlemleri başlatılacak.
                                         "sha":"'"${CURRENT_SHA}"'"
                                     }'
                             '''
+                        } else {
+
+                            echo 'Frontend GitHub tag skipped.'
                         }
                     }
                 }
@@ -442,16 +653,21 @@ Commit:
 ${env.CURRENT_SHA ?: 'N/A'}
 
 Backend:
-  Changed : ${env.BACKEND_CHANGED_FILES ?: '0'}
-  Release : ${env.BACKEND_RELEASE ?: 'N/A'}
-  Version : ${env.BACKEND_VERSION ?: 'N/A'}
-  Tag     : ${env.BACKEND_FULL_TAG ?: 'N/A'}
+  Changed         : ${env.BACKEND_CHANGED_FILES ?: '0'}
+  Release         : ${env.BACKEND_RELEASE ?: 'N/A'}
+  Version         : ${env.BACKEND_VERSION ?: 'N/A'}
+  Tag             : ${env.BACKEND_FULL_TAG ?: 'N/A'}
+  Security Failed : ${env.BACKEND_SECURITY_FAILED ?: 'false'}
 
 Frontend:
-  Changed : ${env.FRONTEND_CHANGED_FILES ?: '0'}
-  Release : ${env.FRONTEND_RELEASE ?: 'N/A'}
-  Version : ${env.FRONTEND_VERSION ?: 'N/A'}
-  Tag     : ${env.FRONTEND_FULL_TAG ?: 'N/A'}
+  Changed         : ${env.FRONTEND_CHANGED_FILES ?: '0'}
+  Release         : ${env.FRONTEND_RELEASE ?: 'N/A'}
+  Version         : ${env.FRONTEND_VERSION ?: 'N/A'}
+  Tag             : ${env.FRONTEND_FULL_TAG ?: 'N/A'}
+  Security Failed : ${env.FRONTEND_SECURITY_FAILED ?: 'false'}
+
+Final Result:
+${currentBuild.result ?: 'SUCCESS'}
 
 ========================================
 """

@@ -15,7 +15,7 @@ RUN dotnet restore
 RUN dotnet publish -c Release -o /app/publish
 
 #çalıştırabilmek için runtime ortamı imajı çektik sdk gerek yok yalnız çalıştırma
-FROM mcr.microsoft.com/dotnet/aspnet:8.0
+FROM mcr.microsoft.com/dotnet/aspnet:8.0-jammy
 
 #çalışma dizini
 WORKDIR /app
