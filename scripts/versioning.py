@@ -1,3 +1,4 @@
+```python
 #!/usr/bin/env python3
 
 import re
@@ -29,7 +30,6 @@ def get_latest_tag(component):
 
     Version tags without 'v' are NOT accepted.
     """
-
     tags = run_git(
         "tag",
         "--list",
@@ -108,14 +108,14 @@ def get_bump(commits):
     """
     Conventional Commit rules:
 
-    feat:       -> minor
-    fix:        -> patch
-    perf:       -> patch
-    feat!:      -> major
-    fix!:       -> major
-    perf!:      -> major
-    BREAKING CHANGE -> major
-    Everything else -> none
+    feat:               -> minor
+    fix:                -> patch
+    perf:               -> patch
+    feat!:              -> major
+    fix!:               -> major
+    perf!:              -> major
+    BREAKING CHANGE     -> major
+    Everything else     -> none
     """
 
     if not commits.strip():
@@ -192,6 +192,24 @@ def analyze_component(component):
         component,
     )
 
+    # No changes since the previous tag:
+    # no need to inspect commit history or calculate a bump.
+    if not changes:
+        return {
+            "release": False,
+            "version": None,
+            "bump": "none",
+            "previous_tag": latest_tag,
+            "previous_commit": (
+                get_tag_commit(latest_tag)
+                if latest_tag
+                else ""
+            ),
+            "changed_files": 0,
+        }
+
+    # Only inspect commit history when there are actual
+    # changes in this component.
     commits = get_component_commits(
         latest_tag,
         component,
@@ -199,18 +217,12 @@ def analyze_component(component):
 
     bump = get_bump(commits)
 
-    if not changes:
-        release = False
-        version = None
-
-    elif not latest_tag:
+    if not latest_tag:
         release = True
         version = "v1.0.0"
-
     elif bump == "none":
         release = False
         version = None
-
     else:
         release = True
         version = next_version(
@@ -269,4 +281,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
+```
