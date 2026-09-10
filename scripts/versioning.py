@@ -22,17 +22,13 @@ def run_git(*args):
 
 def get_latest_tag(component):
     """
-    Supported tag formats:
+    Only supports the tag format:
 
-        frontend/v2.0.7
         frontend/v2.0.7-sha.abcdef1
-
-        backend/v2.0.7
         backend/v2.0.7-sha.abcdef1
 
     Version tags without 'v' are NOT accepted.
     """
-
     tags = run_git(
         "tag",
         "--list",
@@ -54,10 +50,7 @@ def get_latest_tag(component):
     if not versioned_tags:
         return None
 
-    return max(
-        versioned_tags,
-        key=lambda item: item[0],
-    )[1]
+    return max(versioned_tags, key=lambda item: item[0])[1]
 
 
 def get_tag_commit(tag):
@@ -70,11 +63,6 @@ def get_tag_commit(tag):
 
 
 def get_component_changes(tag, component):
-    """
-    Checks whether the component has any actual file changes
-    since the latest component tag.
-    """
-
     path = COMPONENTS[component]
 
     if tag:
@@ -96,213 +84,107 @@ def get_component_changes(tag, component):
 
 
 def get_component_commits(tag, component):
-    """
-    Returns commits affecting the component in chronological order.
-
-    Each commit contains:
-
-        hash
-        subject
-        body
-
-    Chronological order is required because a later revert can
-    cancel the effect of an earlier commit.
-    """
-
     path = COMPONENTS[component]
 
-    revision = f"{tag}..HEAD" if tag else "HEAD"
+    if tag:
+        return run_git(
+            "log",
+            f"{tag}..HEAD",
+            "--format=%H%n%s%n%b%n---COMMIT---",
+            "--",
+            path,
+        )
 
-    output = run_git(
+    return run_git(
         "log",
-        "--reverse",
-        revision,
-        "--format=%H%x1f%s%x1f%b%x1e",
+        "--format=%H%n%s%n%b%n---COMMIT---",
         "--",
         path,
     )
 
-    if not output:
-        return []
-
-    commits = []
-
-    for record in output.split("\x1e"):
-        record = record.strip()
-
-        if not record:
-            continue
-
-        parts = record.split("\x1f", 2)
-
-        if len(parts) != 3:
-            continue
-
-        commit_hash, subject, body = parts
-
-        commits.append(
-            {
-                "hash": commit_hash.strip().lower(),
-                "subject": subject.strip(),
-                "body": body.strip(),
-            }
-        )
-
-    return commits
-
 
 def get_reverted_commit_hash(commit):
     """
-    Detects the commit targeted by a standard `git revert`.
+    Returns the commit hash targeted by a Git revert commit.
 
-    Standard Git output contains:
+    Example:
 
-        This reverts commit <SHA>.
-
-    Returns the SHA or None.
+        This reverts commit abc123456789...
     """
 
     match = re.search(
-        r"This reverts commit\s+([0-9a-fA-F]{7,40})\.?",
-        commit["body"],
+        r"This reverts commit\s+([0-9a-fA-F]{7,40})",
+        commit,
         re.IGNORECASE,
     )
 
-    if not match:
-        return None
-
-    return match.group(1).lower()
-
-
-def find_commit(commits_by_hash, short_hash):
-    """
-    Finds a commit using either its full SHA or an abbreviated SHA.
-    """
-
-    short_hash = short_hash.lower()
-
-    if short_hash in commits_by_hash:
-        return commits_by_hash[short_hash]
-
-    matches = [
-        commit
-        for commit_hash, commit in commits_by_hash.items()
-        if commit_hash.startswith(short_hash)
-        or short_hash.startswith(commit_hash)
-    ]
-
-    if len(matches) == 1:
-        return matches[0]
+    if match:
+        return match.group(1)
 
     return None
 
 
-def resolve_original_commit(
-    target_commit,
-    commits_by_hash,
-    visited=None,
-):
-    """
-    Resolves a revert chain back to the original non-revert commit.
+def get_commit_hash(commit):
+    lines = commit.splitlines()
 
-    Example:
-
-        feat A
-        Revert feat A
-        Revert Revert feat A
-
-    The second revert targets the first revert commit.
-    This function resolves that chain back to `feat A`.
-    """
-
-    if visited is None:
-        visited = set()
-
-    target_hash = target_commit["hash"]
-
-    if target_hash in visited:
+    if not lines:
         return None
 
-    visited.add(target_hash)
-
-    reverted_hash = get_reverted_commit_hash(target_commit)
-
-    if not reverted_hash:
-        return target_commit
-
-    parent = find_commit(
-        commits_by_hash,
-        reverted_hash,
-    )
-
-    if not parent:
-        return None
-
-    return resolve_original_commit(
-        parent,
-        commits_by_hash,
-        visited,
-    )
+    return lines[0].strip()
 
 
 def get_active_commits(commits):
     """
-    Determines which original commits are still active after
-    applying all revert operations.
+    Processes commits from oldest to newest.
 
-    Normal commit:
-        active
+    Normal commits are added as active.
 
-    Revert commit:
-        toggles the activity of the original commit it reverts
+    Revert commits remove the targeted commit from the
+    active set.
 
-    Revert of a revert:
-        activates the original commit again
-
-    Revert commits themselves never participate in version bumping.
+    Revert-of-revert does NOT reactivate the original commit.
     """
 
-    commits_by_hash = {
-        commit["hash"]: commit
-        for commit in commits
-    }
+    if not commits.strip():
+        return []
+
+    records = [
+        record.strip()
+        for record in commits.split("---COMMIT---")
+        if record.strip()
+    ]
 
     active_commits = {}
 
-    for commit in commits:
-        reverted_hash = get_reverted_commit_hash(commit)
+    # git log returns newest -> oldest.
+    # Revert processing must happen oldest -> newest.
+    for record in reversed(records):
+        commit_hash = get_commit_hash(record)
 
-        # Normal commit
-        if not reverted_hash:
-            active_commits[commit["hash"]] = commit
+        if not commit_hash:
             continue
 
-        # Revert commit
-        target = find_commit(
-            commits_by_hash,
-            reverted_hash,
-        )
+        reverted_hash = get_reverted_commit_hash(record)
 
-        if not target:
-            # Not a standard/recognizable revert target.
-            # Ignore it for version calculation.
+        if reverted_hash:
+            try:
+                reverted_hash = run_git(
+                    "rev-parse",
+                    reverted_hash,
+                )
+            except subprocess.CalledProcessError:
+                continue
+
+            # A revert only removes the targeted commit.
+            # It never adds/reactivates anything.
+            active_commits.pop(
+                reverted_hash,
+                None,
+            )
+
             continue
 
-        original = resolve_original_commit(
-            target,
-            commits_by_hash,
-        )
-
-        if not original:
-            continue
-
-        original_hash = original["hash"]
-
-        # Toggle the original commit.
-        if original_hash in active_commits:
-            del active_commits[original_hash]
-        else:
-            active_commits[original_hash] = original
+        active_commits[commit_hash] = record
 
     return list(active_commits.values())
 
@@ -314,52 +196,46 @@ def get_bump(commits):
     feat:               -> minor
     fix:                -> patch
     perf:               -> patch
-
     feat!:              -> major
-    fix!:               -> major
+    fix!:              -> major
     perf!:              -> major
-
     BREAKING CHANGE     -> major
-
     Everything else     -> none
+
+    Reverted commits are ignored.
     """
 
-    if not commits:
+    active_commits = get_active_commits(commits)
+
+    if not active_commits:
         return "none"
 
-    commit_text = "\n".join(
-        f"{commit['subject']}\n{commit['body']}"
-        for commit in commits
-    )
+    active_text = "\n".join(active_commits)
 
-    # BREAKING CHANGE has the highest priority.
     if re.search(
         r"BREAKING[ -]CHANGE",
-        commit_text,
+        active_text,
         re.IGNORECASE,
     ):
         return "major"
 
-    # Conventional Commit with !.
     if re.search(
         r"(^|\n)(feat|fix|perf)(\([^)\n]+\))?!:",
-        commit_text,
+        active_text,
         re.IGNORECASE,
     ):
         return "major"
 
-    # feat -> minor.
     if re.search(
         r"(^|\n)feat(\([^)\n]+\))?:",
-        commit_text,
+        active_text,
         re.IGNORECASE,
     ):
         return "minor"
 
-    # fix / perf -> patch.
     if re.search(
         r"(^|\n)(fix|perf)(\([^)\n]+\))?:",
-        commit_text,
+        active_text,
         re.IGNORECASE,
     ):
         return "patch"
@@ -407,15 +283,8 @@ def analyze_component(component):
         component,
     )
 
-    # No actual component changes since the previous tag.
-    #
-    # Example:
-    #
-    #   feat
-    #   Revert feat
-    #
-    # If nothing else changed in the component, the final
-    # filesystem state is the same as the previous tag.
+    # No changes since the previous tag:
+    # no need to inspect commit history or calculate a bump.
     if not changes:
         return {
             "release": False,
@@ -430,24 +299,21 @@ def analyze_component(component):
             "changed_files": 0,
         }
 
+    # Only inspect commit history when there are actual
+    # changes in this component.
     commits = get_component_commits(
         latest_tag,
         component,
     )
 
-    # Remove the effects of reverted commits.
-    active_commits = get_active_commits(commits)
-
-    bump = get_bump(active_commits)
+    bump = get_bump(commits)
 
     if not latest_tag:
         release = True
         version = "v1.0.0"
-
     elif bump == "none":
         release = False
         version = None
-
     else:
         release = True
         version = next_version(
