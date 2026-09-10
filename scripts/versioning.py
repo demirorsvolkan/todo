@@ -1,3 +1,4 @@
+```python
 #!/usr/bin/env python3
 
 import re
@@ -22,12 +23,12 @@ def run_git(*args):
 
 def get_latest_tag(component):
     """
-    Supports both tag formats:
+    Only supports the tag format:
 
         frontend/v2.0.7-sha.abcdef1
-        frontend/2.0.7-sha.abcdef1
+        backend/v2.0.7-sha.abcdef1
 
-    Existing tags use both formats, so both are accepted.
+    Version tags without 'v' are NOT accepted.
     """
 
     tags = run_git(
@@ -40,7 +41,7 @@ def get_latest_tag(component):
 
     for tag in tags:
         match = re.search(
-            r"/v?(\d+)\.(\d+)\.(\d+)(?:-sha\.[0-9a-fA-F]+)?$",
+            r"/v(\d+)\.(\d+)\.(\d+)(?:-sha\.[0-9a-fA-F]+)?$",
             tag,
         )
 
@@ -111,20 +112,16 @@ def get_bump(commits):
     feat:       -> minor
     fix:        -> patch
     perf:       -> patch
-
     feat!:      -> major
     fix!:       -> major
     perf!:      -> major
-
     BREAKING CHANGE -> major
-
     Everything else -> none
     """
 
     if not commits.strip():
         return "none"
 
-    # Explicit breaking-change footer
     if re.search(
         r"BREAKING[ -]CHANGE",
         commits,
@@ -132,7 +129,6 @@ def get_bump(commits):
     ):
         return "major"
 
-    # Conventional Commit breaking-change marker
     if re.search(
         r"(^|\n)(feat|fix|perf)(\([^)\n]+\))?!:",
         commits,
@@ -140,7 +136,6 @@ def get_bump(commits):
     ):
         return "major"
 
-    # Feature -> minor
     if re.search(
         r"(^|\n)feat(\([^)\n]+\))?:",
         commits,
@@ -148,7 +143,6 @@ def get_bump(commits):
     ):
         return "minor"
 
-    # Fix / performance -> patch
     if re.search(
         r"(^|\n)(fix|perf)(\([^)\n]+\))?:",
         commits,
@@ -164,7 +158,7 @@ def parse_version(tag):
         return (0, 0, 0)
 
     match = re.search(
-        r"/v?(\d+)\.(\d+)\.(\d+)",
+        r"/v(\d+)\.(\d+)\.(\d+)",
         tag,
     )
 
@@ -180,13 +174,13 @@ def next_version(current, bump):
     major, minor, patch = current
 
     if bump == "major":
-        return f"{major + 1}.0.0"
+        return f"v{major + 1}.0.0"
 
     if bump == "minor":
-        return f"{major}.{minor + 1}.0"
+        return f"v{major}.{minor + 1}.0"
 
     if bump == "patch":
-        return f"{major}.{minor}.{patch + 1}"
+        return f"v{major}.{minor}.{patch + 1}"
 
     return None
 
@@ -212,7 +206,7 @@ def analyze_component(component):
 
     elif not latest_tag:
         release = True
-        version = "1.0.0"
+        version = "v1.0.0"
 
     elif bump == "none":
         release = False
@@ -276,4 +270,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
+```
