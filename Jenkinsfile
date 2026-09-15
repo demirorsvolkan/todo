@@ -15,6 +15,16 @@ pipeline {
 
         DOCKERHUB_BACKEND_REPO = 'volkandemirors/todo-backend'
         DOCKERHUB_FRONTEND_REPO = 'volkandemirors/todo-frontend'
+
+        // Teams notification flags
+        BACKEND_SECURITY_STATUS = 'NOT SCANNED'
+        FRONTEND_SECURITY_STATUS = 'NOT SCANNED'
+
+        BACKEND_DOCKER_PUSHED = 'false'
+        FRONTEND_DOCKER_PUSHED = 'false'
+
+        BACKEND_TAG_CREATED = 'false'
+        FRONTEND_TAG_CREATED = 'false'
     }
 
     stages {
@@ -317,13 +327,6 @@ ve güvenlik taraması işlemleri başlatılacak.
             steps {
                 script {
 
-                    /*
-                     * Scan başlamadan önce mevcut release durumlarını
-                     * saklıyoruz.
-                     *
-                     * Çünkü Trivy başarısız olduğunda RELEASE flag'i
-                     * false yapılacak.
-                     */
                     def backendWasReleased =
                         env.BACKEND_RELEASE == 'true'
 
@@ -336,9 +339,6 @@ ve güvenlik taraması işlemleri başlatılacak.
                     env.BACKEND_SECURITY_FAILED = 'false'
                     env.FRONTEND_SECURITY_FAILED = 'false'
 
-                    /*
-                     * BACKEND SECURITY SCAN
-                     */
                     if (backendWasReleased) {
 
                         echo '''
@@ -368,11 +368,14 @@ Jenkins pipeline will be marked as FAILURE.
 '''
 
                             env.BACKEND_SECURITY_FAILED = 'true'
+                            env.BACKEND_SECURITY_STATUS = 'FAILED'
                             env.BACKEND_RELEASE = 'false'
 
                             currentBuild.result = 'FAILURE'
 
                         } else {
+
+                            env.BACKEND_SECURITY_STATUS = 'PASSED'
 
                             echo '''
 Backend Trivy security scan PASSED.
@@ -380,9 +383,6 @@ Backend Trivy security scan PASSED.
                         }
                     }
 
-                    /*
-                     * FRONTEND SECURITY SCAN
-                     */
                     if (frontendWasReleased) {
 
                         echo '''
@@ -412,11 +412,14 @@ Jenkins pipeline will be marked as FAILURE.
 '''
 
                             env.FRONTEND_SECURITY_FAILED = 'true'
+                            env.FRONTEND_SECURITY_STATUS = 'FAILED'
                             env.FRONTEND_RELEASE = 'false'
 
                             currentBuild.result = 'FAILURE'
 
                         } else {
+
+                            env.FRONTEND_SECURITY_STATUS = 'PASSED'
 
                             echo '''
 Frontend Trivy security scan PASSED.
@@ -424,16 +427,6 @@ Frontend Trivy security scan PASSED.
                         }
                     }
 
-                    /*
-                     * ÖZEL RELEASE KURALI
-                     *
-                     * Backend ve frontend aynı pipeline'da release ediliyor
-                     * VE ikisi de feat veya major seviyesindeyse,
-                     * frontend security scan fail olduğunda backend de
-                     * release edilmeyecek.
-                     *
-                     * patch seviyesinde bu bağımlılık uygulanmaz.
-                     */
                     def bothAreFeatureReleases =
                         backendWasReleased &&
                         frontendWasReleased &&
@@ -517,10 +510,6 @@ Build Result:
                                     --password-stdin
                         '''
 
-                        /*
-                         * Sadece security scan'dan geçen ve
-                         * release flag'i hala true olan backend push edilir.
-                         */
                         if (env.BACKEND_RELEASE == 'true') {
 
                             echo '========== PUSH BACKEND IMAGE =========='
@@ -532,15 +521,14 @@ Build Result:
                                 docker push \
                                     '${DOCKERHUB_BACKEND_REPO}:${env.BACKEND_DOCKER_SHA_TAG}'
                             """
+
+                            env.BACKEND_DOCKER_PUSHED = 'true'
+
                         } else {
 
                             echo 'Backend release blocked. Docker Hub push skipped.'
                         }
 
-                        /*
-                         * Sadece security scan'dan geçen ve
-                         * release flag'i hala true olan frontend push edilir.
-                         */
                         if (env.FRONTEND_RELEASE == 'true') {
 
                             echo '========== PUSH FRONTEND IMAGE =========='
@@ -552,6 +540,9 @@ Build Result:
                                 docker push \
                                     '${DOCKERHUB_FRONTEND_REPO}:${env.FRONTEND_DOCKER_SHA_TAG}'
                             """
+
+                            env.FRONTEND_DOCKER_PUSHED = 'true'
+
                         } else {
 
                             echo 'Frontend release blocked. Docker Hub push skipped.'
@@ -602,6 +593,9 @@ Build Result:
                                         "sha":"'"${CURRENT_SHA}"'"
                                     }'
                             '''
+
+                            env.BACKEND_TAG_CREATED = 'true'
+
                         } else {
 
                             echo 'Backend GitHub tag skipped.'
@@ -628,6 +622,9 @@ Build Result:
                                         "sha":"'"${CURRENT_SHA}"'"
                                     }'
                             '''
+
+                            env.FRONTEND_TAG_CREATED = 'true'
+
                         } else {
 
                             echo 'Frontend GitHub tag skipped.'
@@ -655,16 +652,20 @@ ${env.CURRENT_SHA ?: 'N/A'}
 Backend:
   Changed         : ${env.BACKEND_CHANGED_FILES ?: '0'}
   Release         : ${env.BACKEND_RELEASE ?: 'N/A'}
+  Bump            : ${env.BACKEND_BUMP ?: 'N/A'}
   Version         : ${env.BACKEND_VERSION ?: 'N/A'}
-  Tag             : ${env.BACKEND_FULL_TAG ?: 'N/A'}
-  Security Failed : ${env.BACKEND_SECURITY_FAILED ?: 'false'}
+  Security        : ${env.BACKEND_SECURITY_STATUS ?: 'NOT SCANNED'}
+  Docker Hub      : ${env.BACKEND_DOCKER_PUSHED == 'true' ? 'PUSHED' : 'NOT PUSHED'}
+  GitHub Tag      : ${env.BACKEND_TAG_CREATED == 'true' ? 'CREATED' : 'NOT CREATED'}
 
 Frontend:
   Changed         : ${env.FRONTEND_CHANGED_FILES ?: '0'}
   Release         : ${env.FRONTEND_RELEASE ?: 'N/A'}
+  Bump            : ${env.FRONTEND_BUMP ?: 'N/A'}
   Version         : ${env.FRONTEND_VERSION ?: 'N/A'}
-  Tag             : ${env.FRONTEND_FULL_TAG ?: 'N/A'}
-  Security Failed : ${env.FRONTEND_SECURITY_FAILED ?: 'false'}
+  Security        : ${env.FRONTEND_SECURITY_STATUS ?: 'NOT SCANNED'}
+  Docker Hub      : ${env.FRONTEND_DOCKER_PUSHED == 'true' ? 'PUSHED' : 'NOT PUSHED'}
+  GitHub Tag      : ${env.FRONTEND_TAG_CREATED == 'true' ? 'CREATED' : 'NOT CREATED'}
 
 Final Result:
 ${currentBuild.result ?: 'SUCCESS'}
@@ -672,107 +673,151 @@ ${currentBuild.result ?: 'SUCCESS'}
 ========================================
 """
         }
-       
-       success {
-    withCredentials([
-        string(
-            credentialsId: 'teams-workflow-url',
-            variable: 'TEAMS_WEBHOOK'
-        )
-    ]) {
-        sh '''
-            curl -sS -f -X POST "$TEAMS_WEBHOOK" \
-                -H "Content-Type: application/json" \
-                -d '{
-                    "type": "AdaptiveCard",
-                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                    "version": "1.2",
-                    "body": [
-                        {
-                            "type": "TextBlock",
-                            "size": "Large",
-                            "weight": "Bolder",
-                            "text": "Jenkins Pipeline - SUCCESS"
-                        },
-                        {
-                            "type": "FactSet",
-                            "facts": [
-                                {
-                                    "title": "Job",
-                                    "value": "'"$JOB_NAME"'"
-                                },
-                                {
-                                    "title": "Build",
-                                    "value": "#'"$BUILD_NUMBER"'"
-                                },
-                                {
-                                    "title": "Commit",
-                                    "value": "'"${CURRENT_SHORT_SHA:-N/A}"'"
-                                }
-                            ]
-                        }
-                    ],
-                    "actions": [
-                        {
-                            "type": "Action.OpenUrl",
-                            "title": "Build Details",
-                            "url": "'"$BUILD_URL"'"
-                        }
-                    ]
-                }'
-        '''
-    }
-}
 
-failure {
-    withCredentials([
-        string(
-            credentialsId: 'teams-workflow-url',
-            variable: 'TEAMS_WEBHOOK'
-        )
-    ]) {
-        sh '''
-            curl -sS -f -X POST "$TEAMS_WEBHOOK" \
-                -H "Content-Type: application/json" \
-                -d '{
-                    "type": "AdaptiveCard",
-                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                    "version": "1.2",
-                    "body": [
-                        {
-                            "type": "TextBlock",
-                            "size": "Large",
-                            "weight": "Bolder",
-                            "text": "Jenkins Pipeline - FAILURE"
-                        },
-                        {
-                            "type": "FactSet",
-                            "facts": [
+        success {
+
+            withCredentials([
+                string(
+                    credentialsId: 'teams-workflow-url',
+                    variable: 'TEAMS_WEBHOOK'
+                )
+            ]) {
+
+                sh '''
+                    curl -sS -f -X POST "$TEAMS_WEBHOOK" \
+                        -H "Content-Type: application/json" \
+                        -d '{
+                            "type": "AdaptiveCard",
+                            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                            "version": "1.2",
+                            "body": [
                                 {
-                                    "title": "Job",
-                                    "value": "'"$JOB_NAME"'"
+                                    "type": "TextBlock",
+                                    "size": "Large",
+                                    "weight": "Bolder",
+                                    "text": "Jenkins Pipeline - SUCCESS"
                                 },
                                 {
-                                    "title": "Build",
-                                    "value": "#'"$BUILD_NUMBER"'"
+                                    "type": "FactSet",
+                                    "facts": [
+                                        {
+                                            "title": "Job",
+                                            "value": "'"$JOB_NAME"'"
+                                        },
+                                        {
+                                            "title": "Build",
+                                            "value": "#'"$BUILD_NUMBER"'"
+                                        },
+                                        {
+                                            "title": "Commit",
+                                            "value": "'"${CURRENT_SHORT_SHA:-N/A}"'"
+                                        }
+                                    ]
                                 },
                                 {
-                                    "title": "Commit",
-                                    "value": "'"${CURRENT_SHORT_SHA:-N/A}"'"
+                                    "type": "TextBlock",
+                                    "weight": "Bolder",
+                                    "text": "Backend"
+                                },
+                                {
+                                    "type": "TextBlock",
+                                    "wrap": true,
+                                    "text": "Changed: '"${BACKEND_CHANGED_FILES:-0}"'\nRelease: '"${BACKEND_RELEASE:-N/A}"'\nBump: '"${BACKEND_BUMP:-N/A}"'\nVersion: '"${BACKEND_VERSION:-N/A}"'\nSecurity: '"${BACKEND_SECURITY_STATUS:-NOT SCANNED}"'\nDocker Hub: '"${BACKEND_DOCKER_PUSHED:-false}"'\nGitHub Tag: '"${BACKEND_TAG_CREATED:-false}"'"
+                                },
+                                {
+                                    "type": "TextBlock",
+                                    "weight": "Bolder",
+                                    "text": "Frontend"
+                                },
+                                {
+                                    "type": "TextBlock",
+                                    "wrap": true,
+                                    "text": "Changed: '"${FRONTEND_CHANGED_FILES:-0}"'\nRelease: '"${FRONTEND_RELEASE:-N/A}"'\nBump: '"${FRONTEND_BUMP:-N/A}"'\nVersion: '"${FRONTEND_VERSION:-N/A}"'\nSecurity: '"${FRONTEND_SECURITY_STATUS:-NOT SCANNED}"'\nDocker Hub: '"${FRONTEND_DOCKER_PUSHED:-false}"'\nGitHub Tag: '"${FRONTEND_TAG_CREATED:-false}"'"
+                                }
+                            ],
+                            "actions": [
+                                {
+                                    "type": "Action.OpenUrl",
+                                    "title": "Build Details",
+                                    "url": "'"$BUILD_URL"'"
                                 }
                             ]
-                        }
-                    ],
-                    "actions": [
-                        {
-                            "type": "Action.OpenUrl",
-                            "title": "Build Details",
-                            "url": "'"$BUILD_URL"'"
-                        }
-                    ]
-                }'
-        '''
-    }
-}
+                        }'
+                '''
+            }
+        }
+
+        failure {
+
+            withCredentials([
+                string(
+                    credentialsId: 'teams-workflow-url',
+                    variable: 'TEAMS_WEBHOOK'
+                )
+            ]) {
+
+                sh '''
+                    curl -sS -f -X POST "$TEAMS_WEBHOOK" \
+                        -H "Content-Type: application/json" \
+                        -d '{
+                            "type": "AdaptiveCard",
+                            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                            "version": "1.2",
+                            "body": [
+                                {
+                                    "type": "TextBlock",
+                                    "size": "Large",
+                                    "weight": "Bolder",
+                                    "text": "Jenkins Pipeline - FAILURE"
+                                },
+                                {
+                                    "type": "FactSet",
+                                    "facts": [
+                                        {
+                                            "title": "Job",
+                                            "value": "'"$JOB_NAME"'"
+                                        },
+                                        {
+                                            "title": "Build",
+                                            "value": "#'"$BUILD_NUMBER"'"
+                                        },
+                                        {
+                                            "title": "Commit",
+                                            "value": "'"${CURRENT_SHORT_SHA:-N/A}"'"
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "TextBlock",
+                                    "weight": "Bolder",
+                                    "text": "Backend"
+                                },
+                                {
+                                    "type": "TextBlock",
+                                    "wrap": true,
+                                    "text": "Changed: '"${BACKEND_CHANGED_FILES:-0}"'\nRelease: '"${BACKEND_RELEASE:-N/A}"'\nBump: '"${BACKEND_BUMP:-N/A}"'\nVersion: '"${BACKEND_VERSION:-N/A}"'\nSecurity: '"${BACKEND_SECURITY_STATUS:-NOT SCANNED}"'\nDocker Hub: '"${BACKEND_DOCKER_PUSHED:-false}"'\nGitHub Tag: '"${BACKEND_TAG_CREATED:-false}"'"
+                                },
+                                {
+                                    "type": "TextBlock",
+                                    "weight": "Bolder",
+                                    "text": "Frontend"
+                                },
+                                {
+                                    "type": "TextBlock",
+                                    "wrap": true,
+                                    "text": "Changed: '"${FRONTEND_CHANGED_FILES:-0}"'\nRelease: '"${FRONTEND_RELEASE:-N/A}"'\nBump: '"${FRONTEND_BUMP:-N/A}"'\nVersion: '"${FRONTEND_VERSION:-N/A}"'\nSecurity: '"${FRONTEND_SECURITY_STATUS:-NOT SCANNED}"'\nDocker Hub: '"${FRONTEND_DOCKER_PUSHED:-false}"'\nGitHub Tag: '"${FRONTEND_TAG_CREATED:-false}"'"
+                                }
+                            ],
+                            "actions": [
+                                {
+                                    "type": "Action.OpenUrl",
+                                    "title": "Build Details",
+                                    "url": "'"$BUILD_URL"'"
+                                }
+                            ]
+                        }'
+                '''
+            }
+        }
     }
 }
