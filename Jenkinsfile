@@ -672,7 +672,8 @@ ${currentBuild.result ?: 'SUCCESS'}
 ========================================
 """
         }
-        success {
+       
+       success {
     withCredentials([
         string(
             credentialsId: 'teams-workflow-url',
@@ -683,11 +684,41 @@ ${currentBuild.result ?: 'SUCCESS'}
             curl -sS -f -X POST "$TEAMS_WEBHOOK" \
                 -H "Content-Type: application/json" \
                 -d '{
-                    "status": "SUCCESS",
-                    "job": "'"$JOB_NAME"'",
-                    "build": "'"$BUILD_NUMBER"'",
-                    "commit": "'"${CURRENT_SHORT_SHA:-N/A}"'",
-                    "url": "'"$BUILD_URL"'"
+                    "type": "AdaptiveCard",
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "version": "1.2",
+                    "body": [
+                        {
+                            "type": "TextBlock",
+                            "size": "Large",
+                            "weight": "Bolder",
+                            "text": "Jenkins Pipeline - SUCCESS"
+                        },
+                        {
+                            "type": "FactSet",
+                            "facts": [
+                                {
+                                    "title": "Job",
+                                    "value": "'"$JOB_NAME"'"
+                                },
+                                {
+                                    "title": "Build",
+                                    "value": "#'"$BUILD_NUMBER"'"
+                                },
+                                {
+                                    "title": "Commit",
+                                    "value": "'"${CURRENT_SHORT_SHA:-N/A}"'"
+                                }
+                            ]
+                        }
+                    ],
+                    "actions": [
+                        {
+                            "type": "Action.OpenUrl",
+                            "title": "Build Details",
+                            "url": "'"$BUILD_URL"'"
+                        }
+                    ]
                 }'
         '''
     }
@@ -704,11 +735,41 @@ failure {
             curl -sS -f -X POST "$TEAMS_WEBHOOK" \
                 -H "Content-Type: application/json" \
                 -d '{
-                    "status": "FAILURE",
-                    "job": "'"$JOB_NAME"'",
-                    "build": "'"$BUILD_NUMBER"'",
-                    "commit": "'"${CURRENT_SHORT_SHA:-N/A}"'",
-                    "url": "'"$BUILD_URL"'"
+                    "type": "AdaptiveCard",
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "version": "1.2",
+                    "body": [
+                        {
+                            "type": "TextBlock",
+                            "size": "Large",
+                            "weight": "Bolder",
+                            "text": "Jenkins Pipeline - FAILURE"
+                        },
+                        {
+                            "type": "FactSet",
+                            "facts": [
+                                {
+                                    "title": "Job",
+                                    "value": "'"$JOB_NAME"'"
+                                },
+                                {
+                                    "title": "Build",
+                                    "value": "#'"$BUILD_NUMBER"'"
+                                },
+                                {
+                                    "title": "Commit",
+                                    "value": "'"${CURRENT_SHORT_SHA:-N/A}"'"
+                                }
+                            ]
+                        }
+                    ],
+                    "actions": [
+                        {
+                            "type": "Action.OpenUrl",
+                            "title": "Build Details",
+                            "url": "'"$BUILD_URL"'"
+                        }
+                    ]
                 }'
         '''
     }
