@@ -672,5 +672,46 @@ ${currentBuild.result ?: 'SUCCESS'}
 ========================================
 """
         }
+        success {
+    withCredentials([
+        string(
+            credentialsId: 'teams-workflow-url',
+            variable: 'TEAMS_WEBHOOK'
+        )
+    ]) {
+        sh '''
+            curl -sS -f -X POST "$TEAMS_WEBHOOK" \
+                -H "Content-Type: application/json" \
+                -d '{
+                    "status": "SUCCESS",
+                    "job": "'"$JOB_NAME"'",
+                    "build": "'"$BUILD_NUMBER"'",
+                    "commit": "'"${CURRENT_SHORT_SHA:-N/A}"'",
+                    "url": "'"$BUILD_URL"'"
+                }'
+        '''
+    }
+}
+
+failure {
+    withCredentials([
+        string(
+            credentialsId: 'teams-workflow-url',
+            variable: 'TEAMS_WEBHOOK'
+        )
+    ]) {
+        sh '''
+            curl -sS -f -X POST "$TEAMS_WEBHOOK" \
+                -H "Content-Type: application/json" \
+                -d '{
+                    "status": "FAILURE",
+                    "job": "'"$JOB_NAME"'",
+                    "build": "'"$BUILD_NUMBER"'",
+                    "commit": "'"${CURRENT_SHORT_SHA:-N/A}"'",
+                    "url": "'"$BUILD_URL"'"
+                }'
+        '''
+    }
+}
     }
 }
