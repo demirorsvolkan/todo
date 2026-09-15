@@ -16,29 +16,31 @@ pipeline {
         DOCKERHUB_BACKEND_REPO = 'volkandemirors/todo-backend'
         DOCKERHUB_FRONTEND_REPO = 'volkandemirors/todo-frontend'
 
-        // Teams notification flags
-        BACKEND_SECURITY_STATUS = 'NOT SCANNED'
-        FRONTEND_SECURITY_STATUS = 'NOT SCANNED'
-
-        BACKEND_DOCKER_PUSHED = 'false'
-        FRONTEND_DOCKER_PUSHED = 'false'
-
-        BACKEND_TAG_CREATED = 'false'
-        FRONTEND_TAG_CREATED = 'false'
     }
 
     stages {
 
         stage('01 - Checkout') {
-            steps {
-                checkout scm
+    steps {
+        checkout scm
 
-                sh '''
-                    set -eu
-                    git fetch --tags --force
-                '''
-            }
+        sh '''
+            set -eu
+            git fetch --tags --force
+        '''
+
+        script {
+            env.BACKEND_SECURITY_STATUS = 'NOT SCANNED'
+            env.FRONTEND_SECURITY_STATUS = 'NOT SCANNED'
+
+            env.BACKEND_DOCKER_PUSHED = 'false'
+            env.FRONTEND_DOCKER_PUSHED = 'false'
+
+            env.BACKEND_TAG_CREATED = 'false'
+            env.FRONTEND_TAG_CREATED = 'false'
         }
+    }
+}
 
         stage('02 - Current Commit') {
             steps {
