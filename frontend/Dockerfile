@@ -22,6 +22,7 @@ RUN npm run build
 #ngix için alpine imajı çektik
 FROM nginx:alpine
 
+RUN apk update && apk upgrade
 #--from=build --> build isimli stageden dist dizinindeki dosyaları
 # /usr/share/nginx/html dizninine kopyaladık
 COPY --from=build /app/dist /usr/share/nginx/html
