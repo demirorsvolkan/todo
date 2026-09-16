@@ -60,12 +60,17 @@ function App() {
 
   return (
     <div className="app">
-      <h1>Todo App</h1>
+      <div className="header">
+        <div>
+          <h1>Todo App</h1>
+          <p>Görevlerini düzenle ve takip et</p>
+        </div>
+      </div>
 
       <div className="add-todo">
         <input
           type="text"
-          placeholder="Todo yaz..."
+          placeholder="Yeni bir görev yaz..."
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           onKeyDown={(e) => {
@@ -73,31 +78,41 @@ function App() {
           }}
         />
 
-        <button onClick={addTodo}>Ekle</button>
+        <button onClick={addTodo}>+ Ekle</button>
       </div>
 
       <ul>
-        {todos.map((todo) => (
-          <li key={todo.id}>
-            <label>
-              <input
-                type="checkbox"
-                checked={todo.isCompleted}
-                onChange={() => toggleTodo(todo)}
-              />
+        {todos.map((todo, index) => (
+          <li
+            key={todo.id}
+            className={`todo-card ${todo.isCompleted ? "is-completed" : ""}`}
+            style={{ "--rotation": `${(index % 3 - 1) * 0.6}deg` }}
+          >
+            <div className="note-content">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={todo.isCompleted}
+                  onChange={() => toggleTodo(todo)}
+                />
 
-              <span className={todo.isCompleted ? "completed" : ""}>
-                {todo.title}
-              </span>
-            </label>
+                <span className={todo.isCompleted ? "completed" : ""}>
+                  {todo.title}
+                </span>
+              </label>
+            </div>
 
-            <button onClick={() => deleteTodo(todo.id)}>Sil</button>
+            <button
+              className="delete-button"
+              onClick={() => deleteTodo(todo.id)}
+            >
+              Sil
+            </button>
           </li>
         ))}
       </ul>
     </div>
   );
 }
-//test frontend 5
+
 export default App;
-// versioning chore test
