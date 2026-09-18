@@ -20,7 +20,7 @@ pipeline {
 
     stages {
 
-        stage('01 - Checkout') {
+        stage('01 - Checkout & Commit') {
     steps {
         checkout scm
 
@@ -30,6 +30,16 @@ pipeline {
         '''
 
         script {
+            env.CURRENT_SHA = sh(
+                script: 'git rev-parse HEAD',
+                returnStdout: true
+            ).trim()
+
+            env.CURRENT_SHORT_SHA = sh(
+                script: 'git rev-parse --short=7 HEAD',
+                returnStdout: true
+            ).trim()
+
             env.BACKEND_SECURITY_STATUS = 'NOT SCANNED'
             env.FRONTEND_SECURITY_STATUS = 'NOT SCANNED'
 
@@ -38,36 +48,20 @@ pipeline {
 
             env.BACKEND_TAG_CREATED = 'false'
             env.FRONTEND_TAG_CREATED = 'false'
-        }
-    }
-}
 
-        stage('02 - Current Commit') {
-            steps {
-                script {
-
-                    env.CURRENT_SHA = sh(
-                        script: 'git rev-parse HEAD',
-                        returnStdout: true
-                    ).trim()
-
-                    env.CURRENT_SHORT_SHA = sh(
-                        script: 'git rev-parse --short=7 HEAD',
-                        returnStdout: true
-                    ).trim()
-
-                    echo """
-========== CURRENT COMMIT ==========
+            echo """
+========== CHECKOUT & COMMIT ==========
 
 Current SHA : ${env.CURRENT_SHA}
 Short SHA   : ${env.CURRENT_SHORT_SHA}
 
+========================================
 """
-                }
-            }
         }
+    }
+}
 
-        stage('03 - Versioning') {
+        stage('02 - Versioning') {
             steps {
                 script {
 
@@ -127,78 +121,75 @@ Frontend:
             }
         }
 
-        stage('04 - Prepare Release Metadata') {
-            steps {
-                script {
-
-                    if (env.BACKEND_RELEASE == 'true') {
-
-                        env.BACKEND_FULL_TAG =
-                            "backend/${env.BACKEND_VERSION}-sha.${env.CURRENT_SHORT_SHA}"
-
-                        env.BACKEND_DOCKER_VERSION_TAG =
-                            env.BACKEND_VERSION
-
-                        env.BACKEND_DOCKER_SHA_TAG =
-                            "sha-${env.CURRENT_SHORT_SHA}"
-                    }
-
-                    if (env.FRONTEND_RELEASE == 'true') {
-
-                        env.FRONTEND_FULL_TAG =
-                            "frontend/${env.FRONTEND_VERSION}-sha.${env.CURRENT_SHORT_SHA}"
-
-                        env.FRONTEND_DOCKER_VERSION_TAG =
-                            env.FRONTEND_VERSION
-
-                        env.FRONTEND_DOCKER_SHA_TAG =
-                            "sha-${env.CURRENT_SHORT_SHA}"
-                    }
-
-                    echo """
-========== RELEASE METADATA ==========
-
-Backend:
-  Release : ${env.BACKEND_RELEASE}
-  Version : ${env.BACKEND_VERSION ?: 'NO BUILD'}
-  Git Tag : ${env.BACKEND_FULL_TAG ?: 'NO BUILD'}
-
-Frontend:
-  Release : ${env.FRONTEND_RELEASE}
-  Version : ${env.FRONTEND_VERSION ?: 'NO BUILD'}
-  Git Tag : ${env.FRONTEND_FULL_TAG ?: 'NO BUILD'}
-
-========================================
-"""
-                }
-            }
+      stage('03 - Prepare Release Metadata') {
+    when {
+        expression {
+            env.BACKEND_RELEASE == 'true' ||
+            env.FRONTEND_RELEASE == 'true'
         }
+    }
 
-        stage('05 - Release Check') {
-            when {
-                expression {
-                    env.BACKEND_RELEASE == 'true' ||
-                    env.FRONTEND_RELEASE == 'true'
-                }
+    steps {
+        script {
+
+            if (env.BACKEND_RELEASE == 'true') {
+
+                env.BACKEND_FULL_TAG =
+                    "backend/${env.BACKEND_VERSION}-sha.${env.CURRENT_SHORT_SHA}"
+
+                env.BACKEND_DOCKER_VERSION_TAG =
+                    env.BACKEND_VERSION
+
+                env.BACKEND_DOCKER_SHA_TAG =
+                    "sha-${env.CURRENT_SHORT_SHA}"
             }
 
-            steps {
-                echo '''
+            if (env.FRONTEND_RELEASE == 'true') {
+
+                env.FRONTEND_FULL_TAG =
+                    "frontend/${env.FRONTEND_VERSION}-sha.${env.CURRENT_SHORT_SHA}"
+
+                env.FRONTEND_DOCKER_VERSION_TAG =
+                    env.FRONTEND_VERSION
+
+                env.FRONTEND_DOCKER_SHA_TAG =
+                    "sha-${env.CURRENT_SHORT_SHA}"
+            }
+
+            echo """
+==================================================
+             RELEASE PREPARATION
 ==================================================
 
 Release gerektiren değişiklik bulundu.
 
-Docker image oluşturma,
-Docker Hub push,
-GitHub tag
-ve güvenlik taraması işlemleri başlatılacak.
+Backend:
+  Release       : ${env.BACKEND_RELEASE}
+  Version       : ${env.BACKEND_VERSION ?: 'NO BUILD'}
+  Git Tag       : ${env.BACKEND_FULL_TAG ?: 'NO BUILD'}
+  Docker Version: ${env.BACKEND_DOCKER_VERSION_TAG ?: 'NO BUILD'}
+  Docker SHA    : ${env.BACKEND_DOCKER_SHA_TAG ?: 'NO BUILD'}
+
+Frontend:
+  Release       : ${env.FRONTEND_RELEASE}
+  Version       : ${env.FRONTEND_VERSION ?: 'NO BUILD'}
+  Git Tag       : ${env.FRONTEND_FULL_TAG ?: 'NO BUILD'}
+  Docker Version: ${env.FRONTEND_DOCKER_VERSION_TAG ?: 'NO BUILD'}
+  Docker SHA    : ${env.FRONTEND_DOCKER_SHA_TAG ?: 'NO BUILD'}
 
 ==================================================
-'''
-            }
-        }
+Docker image build,
+security scan,
+Docker Hub push
+ve GitHub tag işlemleri release durumuna göre devam edecek.
 
-        stage('06 - Docker Image Build') {
+==================================================
+"""
+        }
+    }
+}
+
+        stage('04 - Docker Image Build') {
             when {
                 expression {
                     env.BACKEND_RELEASE == 'true' ||
@@ -236,7 +227,7 @@ ve güvenlik taraması işlemleri başlatılacak.
             }
         }
 
-        stage('07 - Trivy Security Scan') {
+        stage('05 - Trivy Security Scan') {
             when {
                 expression {
                     env.BACKEND_RELEASE == 'true' ||
@@ -401,7 +392,7 @@ Build Result:
             }
         }
 
-        stage('8 - Docker Hub Push') {
+        stage('06 - Docker Hub Push') {
             when {
                 expression {
                     env.BACKEND_RELEASE == 'true' ||
@@ -474,7 +465,7 @@ Build Result:
             }
         }
 
-        stage('9 - Create GitHub Tags') {
+        stage('07 - Create GitHub Tags') {
             when {
                 expression {
                     env.BACKEND_RELEASE == 'true' ||
